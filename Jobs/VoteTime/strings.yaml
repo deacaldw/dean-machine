@@ -1,0 +1,51 @@
+# Strings for the VoteTime job. Edit freely to restyle messages.
+# Placeholders in {braces} are filled in by the bot.
+# Discord markdown works in chat messages: **bold**, *italic*, `code`, # headings, etc.
+
+command: "vote-time"
+description: "Start a poll to pick the time of the next game session"
+
+options:
+  days: "days"
+  days_description: "Number of days to choose from (default 3)"
+  time: "time"
+  time_description: "Session time in UTC, as HH:MM (default 17:00)"
+  name: "name"
+  name_description: "Poll title (default: Next Session)"
+  message: "message"
+  message_description: "Message shown with the local times"
+  dayoffset: "dayoffset"
+  dayoffset_description: "Days from today until the first option (default 1 = tomorrow)"
+
+defaults:
+  name: "Next Session"
+  message: "Vote on the time for the next game session!"
+
+# Poll option text. Max 55 characters after filling in.
+poll_option: "{weekday} {day} {month}, {utc} UTC ({london} London)"
+
+# Message posted right after the poll, showing every option in each viewer's local time.
+local_times_header: "**{name}**\n{message}\n"
+local_times_line: "{emoji} <t:{time}:F>, <t:{time}:R>"
+
+result: "**{name}**\nThe poll has closed. See you all on:\n\n# <t:{time}:F>, <t:{time}:R>"
+no_votes: "**{name}**\nThe poll has closed with no votes."
+
+already_running: "A time vote is already running: {link}\nIt closes <t:{closes}:R> (<t:{closes}:f>)."
+bad_time: "Invalid time `{time}`. Use HH:MM in UTC, e.g. 17:00."
+
+# Used in order, top to bottom: one per poll option.
+emojis:
+  - "🔶"  # large orange diamond
+  - "🔹"  # small blue diamond
+  - "🟢"  # green circle
+  - "🟨"  # yellow square
+  - "❤️"  # red heart
+  - "🔷"  # large blue diamond
+  - "🟥"  # red square
+  - "💛"  # yellow heart
+  - "🔸"  # small orange diamond
+  - "🟦"  # blue square
+
+weekdays: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+months: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]

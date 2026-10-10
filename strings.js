@@ -13,10 +13,14 @@ module.exports = function load(dir) {
   const file = fs.existsSync(external) ? external : bundled;
   const strings = yaml.load(fs.readFileSync(file, 'utf8'));
 
+  const get = key => key.split('.').reduce((obj, k) => obj?.[k], strings);
+
   // t('done', { username: 'Bob' }) -> "Bob, your timer is up."
-  return function t(key, vars = {}) {
-    const value = key.split('.').reduce((obj, k) => obj?.[k], strings);
+  function t(key, vars = {}) {
+    const value = get(key);
     if (typeof value !== 'string') return key;
     return value.replace(/\{(\w+)\}/g, (match, name) => (name in vars ? vars[name] : match));
-  };
+  }
+  t.get = get; // raw value (lists, etc.)
+  return t;
 };

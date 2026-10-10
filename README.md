@@ -7,7 +7,8 @@ A small Discord bot. A loop runs every few seconds and processes jobs stored per
 1. Install Node.js 22+.
 2. `npm install`
 3. Copy `.env.example` to `.env` and put in your bot token.
-4. Invite the bot with the `bot` and `applications.commands` scopes.
+4. Invite the bot with the `bot` and `applications.commands` scopes and the View Channels, Send Messages,
+   Read Message History and Create Polls permissions. The bot prints a ready-made invite link on startup.
 5. `npm start`
 
 ## Build executables

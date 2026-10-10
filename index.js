@@ -14,7 +14,8 @@ const LOOP_SECONDS = Number(process.env.LOOP_SECONDS) || 2;
 // Load every job type from Jobs/<Name>/job.js. The folder name is the job type.
 // Each job module exports:
 //   command  - slash command definition
-//   create(interaction) -> job data object (or null to skip)
+//   create(interaction, existing) -> job data object (or null to skip);
+//                                    `existing` is this server's existing data for this job type
 //   run(data, client)   -> true when the job is complete
 const jobs = {};
 const jobsDir = path.join(__dirname, 'Jobs');
@@ -28,7 +29,7 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 client.once(Events.ClientReady, async () => {
   await client.application.commands.set(Object.values(jobs).map(j => j.command));
   console.log(t('console.logged_in', { tag: client.user.tag, jobs: Object.keys(jobs).join(', ') }));
-  console.log(t('console.invite', { url: `https://discord.com/oauth2/authorize?client_id=${process.env.APP_ID}&scope=bot+applications.commands&permissions=2048` }));
+  console.log(t('console.invite', { url: `https://discord.com/oauth2/authorize?client_id=${process.env.APP_ID}&scope=bot+applications.commands&permissions=562949953489920` }));
   setInterval(loop, LOOP_SECONDS * 1000);
 });
 
@@ -37,9 +38,10 @@ client.on(Events.InteractionCreate, async interaction => {
   const type = Object.keys(jobs).find(name => jobs[name].command.name === interaction.commandName);
   if (!type) return;
 
-  const data = await jobs[type].create(interaction);
-  if (!data) return;
   const server = db.get(interaction.guildId);
+  const existing = server.jobs.filter(j => j.type === type).map(j => j.data);
+  const data = await jobs[type].create(interaction, existing);
+  if (!data) return;
   server.jobs.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), type, data });
   db.save(interaction.guildId);
 });
