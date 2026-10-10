@@ -16,8 +16,12 @@ A small Discord bot. A loop runs every few seconds and processes jobs stored per
 npm run build
 ```
 
-This creates `dist/deanmachine-win.exe` (Windows x64) and `dist/deanmachine-linux` (Debian x64).
-Put `.env` in the same folder as the executable. `Servers/` is created there too.
+This creates two ready-to-deploy folders, each with the executable, a copy of `.env` and the editable strings:
+
+- `dist/windows/` (Windows x64): run `deanmachine.exe`
+- `dist/linux/` (Debian x64): run `./deanmachine` (you may need `chmod +x deanmachine` first)
+
+Copy the whole folder to the target machine. `Servers/` is created next to the executable on first run.
 Default strings are built into the executable. To override, put a copy at the same relative path next to it
 (e.g. `strings.yaml` or `Jobs/Timer/strings.yaml`).
 

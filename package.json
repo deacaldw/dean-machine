@@ -6,7 +6,8 @@
   "bin": "index.js",
   "scripts": {
     "start": "node index.js",
-    "build": "pkg . --out-path dist"
+    "build": "pkg . --out-path dist",
+    "postbuild": "node scripts/bundle.js"
   },
   "pkg": {
     "scripts": [
