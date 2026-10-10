@@ -25,6 +25,21 @@ This creates two ready-to-deploy folders, each with the executable, a copy of `.
 - `dist/linux/` (Debian x64): run `./deanmachine` (you may need `chmod +x deanmachine` first)
 
 Copy the whole folder to the target machine. `Servers/` is created next to the executable on first run.
+
+### Debian service
+
+From the copied `dist/linux` folder:
+
+```
+sudo bash install.sh
+```
+
+This installs the bot to `/opt/deanmachine` and runs it as the `deanmachine` systemd service, as its own
+`deanmachine` user. It starts on boot and restarts 5 seconds after any crash. Re-run it with a newer build to update;
+the existing `.env` and `Servers/` data are kept.
+
+- Logs: `journalctl -u deanmachine -f`
+- Remove the service: `sudo bash /opt/deanmachine/uninstall.sh` (add `--purge` to also delete its files, data and user)
 Default strings are built into the executable. To override, put a copy at the same relative path next to it
 (e.g. `strings.yaml` or `Jobs/VoteTime/strings.yaml`).
 

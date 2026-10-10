@@ -1,6 +1,7 @@
 // Runs after `pkg`: puts each executable in its own folder with everything needed to run it.
 //   dist/windows/  deanmachine.exe + .env + editable strings
-//   dist/linux/    deanmachine     + .env + editable strings
+//   dist/linux/    deanmachine     + .env + editable strings + install.sh/uninstall.sh
+// Anything in deploy/<target>/ (e.g. deploy/linux/install.sh) is copied in too.
 const fs = require('fs');
 const path = require('path');
 
@@ -31,6 +32,13 @@ for (const target of targets) {
   for (const file of strings) {
     fs.mkdirSync(path.join(out, path.dirname(file)), { recursive: true });
     fs.copyFileSync(path.join(root, file), path.join(out, file));
+  }
+  const deploy = path.join(root, 'deploy', target.dir);
+  for (const file of fs.existsSync(deploy) ? fs.readdirSync(deploy) : []) {
+    let content = fs.readFileSync(path.join(deploy, file));
+    // Shell scripts must have Unix line endings, even if git checked them out with CRLF.
+    if (file.endsWith('.sh')) content = content.toString('utf8').replace(/\r\n/g, '\n');
+    fs.writeFileSync(path.join(out, file), content, { mode: 0o755 });
   }
   console.log(`Bundled dist/${target.dir}`);
 }
