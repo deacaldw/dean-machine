@@ -1,9 +1,9 @@
 const path = require('path');
 const { MessageFlags, PermissionFlagsBits, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const t = require('../../strings')(__dirname);
+const t = require('../../src/strings')(__dirname);
 const opt = key => t(`options.${key}`);
 
-// customIds; the core routes "<Job>:..." to this job
+// customIds; the core routes "<Skill>:..." to this skill
 const STOP_MENU = `${path.basename(__dirname)}:stop`;
 const DELETE_BUTTON = `${path.basename(__dirname)}:delete:`; // + job id
 const MIN_REPEAT = 300; // minutes
@@ -148,16 +148,8 @@ module.exports = {
     const now = Date.now();
     if (now < data.nextAt) return false;
 
-    let channel;
     try {
-      channel = await client.channels.fetch(data.channelId);
-    } catch (err) {
-      if (err.code === UNKNOWN_CHANNEL) return true;
-      data.nextAt = now + RETRY_MS;
-      return false;
-    }
-
-    try {
+      const channel = await client.channels.fetch(data.channelId);
       // Anti-spam: skip a repeat if one of its earlier posts is still among the last few messages.
       const recent = data.postIds.length ? await channel.messages.fetch({ limit: SPAM_WINDOW }) : null;
       if (!recent?.some(m => data.postIds.includes(m.id))) {
@@ -165,7 +157,9 @@ module.exports = {
         data.postIds = [...data.postIds, msg.id].slice(-SPAM_WINDOW);
       }
     } catch (err) {
-      console.error(t('post_failed', { channel: data.channelId, error: err.message }));
+      if (err.code === UNKNOWN_CHANNEL) return true;
+      console.error(`Announce: posting in channel ${data.channelId} failed: ${err.message}`);
+      // One-offs retry a few times; repeats just wait for their next slot.
       if (!data.repeat) {
         data.retries = (data.retries ?? 0) + 1;
         data.nextAt = now + RETRY_MS;

@@ -1,81 +1,47 @@
 # DeanMachine
 
-A small Discord bot. A loop runs every few seconds and processes jobs stored per server in `Servers/<Server_ID>.json`.
+A Discord bot for multiple servers. Each feature is a self-contained **skill**; running instances of a skill
+(**jobs**) are stored per server in `Servers/<Server_ID>.json` and processed by a loop every few seconds.
+
+## Skills
+
+- **VoteTime** – `/vote-time`: a 24h poll to pick the next game session time, shown in everyone's local time.
+- **Announce** – `/announce`, `/stop-announce`: one-off or repeating announcements.
 
 ## Setup
 
-1. Install Node.js 22+.
-2. `npm install`
-3. Copy `.env.example` to `.env` and put in your bot token.
-4. Invite the bot with the `bot` and `applications.commands` scopes and the View Channels, Send Messages,
-   Read Message History and Create Polls permissions. The bot prints a ready-made invite link on startup.
-5. `npm start`
+1. Install Node.js 22+ and run `npm install`.
+2. Copy `res/.env.example` to `res/.env` and set `DISCORD_TOKEN` and `APP_ID`.
+3. `npm start`. The bot prints an invite link (also saved to `invite.txt`).
 
-## Build executables
+## Build
 
 ```
 ./build.sh
 ```
 
-This installs dependencies, clears `dist/` and runs `npm run build`.
+Runs the tests, then creates `bin/windows/` and `bin/linux/`. Each contains the executable, `.env`, and the skills'
+`strings.yaml` files, which can be edited there without rebuilding. Everything in `res/<target>/` is copied in too.
 
-This creates two ready-to-deploy folders, each with the executable, a copy of `.env` and the editable strings:
+On Debian, put `bin/linux` where the bot should live and run `sudo bash setup.sh` inside it. This registers it as
+the `deanmachine` systemd service, which starts on boot and restarts on failure. Logs: `journalctl -u deanmachine -f`.
 
-- `dist/windows/` (Windows x64): run `deanmachine.exe`
-- `dist/linux/` (Debian x64): run `./deanmachine` (you may need `chmod +x deanmachine` first)
-
-Copy the whole folder to the target machine. `Servers/` is created next to the executable on first run.
-
-### Debian service
-
-Put the `dist/linux` folder where you want the bot to live, then from inside it:
+## Project layout
 
 ```
-sudo bash setup.sh
+src/        core: Discord client, job loop, per-server JSON database, strings loader
+Skills/     one folder per skill: skill.js + strings.yaml
+res/        files copied into bin/: .env, and linux/setup.sh
+test/       npm test
 ```
 
-This registers the `deanmachine` executable in that folder as the `deanmachine` systemd service. It runs as the user
-who ran `sudo`, starts on boot, and restarts 5 seconds after any crash. Logs: `journalctl -u deanmachine -f`
+## Writing a skill
 
-Once the bot has logged in, its invite link is also saved to `invite.txt` next to the executable.
-Default strings are built into the executable. To override, put a copy at the same relative path next to it
-(e.g. `strings.yaml` or `Jobs/VoteTime/strings.yaml`).
+Add `Skills/<Name>/skill.js` and `Skills/<Name>/strings.yaml`. Load strings with
+`const t = require('../../src/strings')(__dirname)` and export:
 
-## Messages
-
-All strings live in YAML files: core bot messages in `strings.yaml`, and each job's in `Jobs/<Job>/strings.yaml`.
-Edit them to restyle messages (Discord markdown and emoji work). Placeholders like `{name}` are filled in by the bot.
-
-## Jobs
-
-Each job is a self-contained folder in `Jobs/`. The folder name is the job type:
-
-```
-Jobs/
-  Announce/       # /announce, /stop-announce
-  VoteTime/       # /vote-time
-    job.js        # the job's code
-    strings.yaml  # the job's strings
-```
-
-`job.js` loads its own strings with `const t = require('../../strings')(__dirname);` and exports:
-
-- `commands`: the job's slash command definitions
-- `handle(interaction, ctx)`: handles the job's slash commands, plus any button or select menu whose `customId`
-  starts with `<Job>:` (e.g. `Announce:stop`). `ctx.jobs` lists this job type's running instances on the server
-  as `{ id, data }`; `ctx.add(data)` starts a new one (returning its id) and `ctx.remove(id)` deletes one.
-- `run(data, client)`: called every loop tick. It may update `data` (changes are saved automatically).
-  Return `true` when the job is finished and it is removed from the database.
-
-To add a job, add a new folder. No other code changes are needed.
-
-Server database format:
-
-```json
-{
-  "jobs": [
-    { "id": "lx3k9a1b", "type": "VoteTime", "data": { "channelId": "...", "pollId": "...", "timesId": "...", "name": "Next Session", "times": [1791738000, 1791824400, 1791910800], "endsAt": 1791698186389 } }
-  ]
-}
-```
-
+- `commands`: slash command definitions.
+- `handle(interaction, ctx)`: handles the commands, plus buttons and menus whose `customId` starts with `<Name>:`.
+  `ctx.jobs` lists this skill's jobs on the server (`{ id, data }`); `ctx.add(data)` returns a new job id;
+  `ctx.remove(id)` deletes a job.
+- `run(data, client)`: called every tick for each job. Changes to `data` are saved. Return `true` when done.

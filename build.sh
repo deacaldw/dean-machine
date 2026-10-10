@@ -1,16 +1,31 @@
 #!/usr/bin/env bash
-# Builds Windows x64 and Linux x64 executables, each in its own folder with
-# everything needed to run it:
-#   dist/windows/  deanmachine.exe + .env + strings
-#   dist/linux/    deanmachine     + .env + strings
+# Tests, then builds bin/windows and bin/linux, each with everything needed to run:
+# the executable, res/.env, res/<target>/*, and the skills' strings.yaml for editing.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-command -v npm >/dev/null || { echo "npm not found. Install Node.js 22+ first." >&2; exit 1; }
-
 npm install
-rm -rf dist
-npm run build
+npm test
+rm -rf bin
+npx pkg . --out-path bin
 
-echo
-echo "Done. Copy dist/windows or dist/linux to the target machine and run the executable."
+mkdir -p bin/windows bin/linux
+mv bin/deanmachine-win.exe bin/windows/deanmachine.exe
+mv bin/deanmachine-linux bin/linux/deanmachine
+
+for target in windows linux; do
+  out="bin/$target"
+  if [ -f res/.env ]; then
+    cp res/.env "$out/"
+  else
+    echo "res/.env not found; using res/.env.example. Fill in DISCORD_TOKEN before running." >&2
+    cp res/.env.example "$out/.env"
+  fi
+  if [ -d "res/$target" ]; then cp -r "res/$target/." "$out/"; fi
+  for f in Skills/*/strings.yaml; do
+    mkdir -p "$out/$(dirname "$f")"
+    cp "$f" "$out/$f"
+  done
+done
+
+echo "Done: bin/windows and bin/linux"

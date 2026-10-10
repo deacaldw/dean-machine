@@ -1,5 +1,5 @@
 const { MessageFlags } = require('discord.js');
-const t = require('../../strings')(__dirname);
+const t = require('../../src/strings')(__dirname);
 const opt = key => t(`options.${key}`);
 
 const DEFAULT_DAYS = 3;
