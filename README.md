@@ -13,8 +13,10 @@ A small Discord bot. A loop runs every few seconds and processes jobs stored per
 ## Build executables
 
 ```
-npm run build
+./build.sh
 ```
+
+This installs dependencies, clears `dist/` and runs `npm run build`.
 
 This creates two ready-to-deploy folders, each with the executable, a copy of `.env` and the editable strings:
 
