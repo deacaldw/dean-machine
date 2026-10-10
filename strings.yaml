@@ -6,3 +6,4 @@ console:
   invite: "Invite: {url}"
   missing_token: "DISCORD_TOKEN is missing. Put it in {path}"
   job_failed: "Job {type} ({id}) failed: {error}"
+  handler_failed: "Handling a {type} interaction failed: {error}"

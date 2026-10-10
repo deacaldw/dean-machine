@@ -1,0 +1,55 @@
+# Strings for the Announce job. Edit freely to restyle messages.
+# Placeholders in {braces} are filled in by the bot.
+# Discord markdown works in chat messages: **bold**, *italic*, `code`, # headings, etc.
+
+command: "announce"
+description: "Post an announcement in this channel, now or later, once or repeating"
+options:
+  message: "message"
+  message_description: "The announcement text, or an image link (admins only)"
+  delay: "delay"
+  delay_description: "Minutes until the first post (default 0 = now)"
+  repeat: "repeat"
+  repeat_description: "Repeat every N minutes, 300 to 44640 (admins only; default 0 = once)"
+
+stop_command: "stop-announce"
+stop_description: "Stop one of your announcements (admins can stop any)"
+
+# Colour of the bar beside text and image announcements.
+color: "#5865F2"
+
+# Text announcements: this line goes above the coloured block. {mentions} repeats any
+# @mentions from the message, because mentions inside the block don't notify anyone.
+text_intro: "**{username}** says: {mentions}"
+
+# Replies only the user sees.
+scheduled: "Announcement scheduled: posts {when}, {repeat}."
+scheduled_now: "now"
+scheduled_later: "<t:{time}:R> (<t:{time}:f>)"
+scheduled_once: "once"
+scheduled_repeat: "then every {interval}"
+need_admin_repeat: "Only members with the Manage Server permission can create repeating announcements. Please contact an admin."
+need_admin_image: "Only members with the Manage Server permission can announce image links. Please contact an admin."
+user_limit: "You can only have {max} announcements at a time. Stop one first with /stop-announce."
+server_limit: "This server already has {max} announcements, the maximum. Stop one first with /stop-announce."
+bad_repeat: "Repeat must be 0 (post once) or between {min} and {max} minutes."
+nothing_to_stop: "You have no announcements to stop."
+pick_to_stop: "Choose an announcement to stop:"
+pick_placeholder: "Select an announcement"
+stopped: "Stopped: {message}"
+already_gone: "That announcement has already ended or been stopped."
+not_allowed: "You can only stop your own announcements."
+
+# One entry in the /stop-announce list (max 100 characters; longer is cut off).
+stop_label: "{username} ({next} {repeat}): {message}"
+next_in: "in {time}"
+next_now: "now"
+repeat_once: "once"
+repeat_every: "every {interval}"
+
+# Short durations used in the list and replies.
+minutes: "{n}m"
+hours: "{n}h"
+days: "{n}d"
+
+post_failed: "Announcement in channel {channel} failed to post: {error}"

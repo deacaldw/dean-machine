@@ -39,17 +39,20 @@ Each job is a self-contained folder in `Jobs/`. The folder name is the job type:
 
 ```
 Jobs/
-  VoteTime/
+  Announce/       # /announce, /stop-announce
+  VoteTime/       # /vote-time
     job.js        # the job's code
     strings.yaml  # the job's strings
 ```
 
 `job.js` loads its own strings with `const t = require('../../strings')(__dirname);` and exports:
 
-- `command`: the slash command that creates the job
-- `create(interaction, existing)`: replies to the user and returns the job's data (or `null` to not start a job);
-  `existing` is the data of this job type's instances already running on the server
-- `run(data, client)`: called every loop tick; return `true` when the job is finished and it is removed from the database
+- `commands`: the job's slash command definitions
+- `handle(interaction, ctx)`: handles the job's slash commands, plus any button or select menu whose `customId`
+  starts with `<Job>:` (e.g. `Announce:stop`). `ctx.jobs` lists this job type's running instances on the server
+  as `{ id, data }`; `ctx.add(data)` starts a new one and `ctx.remove(id)` deletes one.
+- `run(data, client)`: called every loop tick. It may update `data` (changes are saved automatically).
+  Return `true` when the job is finished and it is removed from the database.
 
 To add a job, add a new folder. No other code changes are needed.
 

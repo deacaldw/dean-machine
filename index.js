@@ -13,10 +13,13 @@ const LOOP_SECONDS = Number(process.env.LOOP_SECONDS) || 2;
 
 // Load every job type from Jobs/<Name>/job.js. The folder name is the job type.
 // Each job module exports:
-//   command  - slash command definition
-//   create(interaction, existing) -> job data object (or null to skip);
-//                                    `existing` is this server's existing data for this job type
-//   run(data, client)   -> true when the job is complete
+//   commands - slash command definitions
+//   handle(interaction, ctx) - handles the job's slash commands, and any component
+//       (button, select menu) whose customId starts with "<Name>:". ctx has:
+//         jobs        this server's running instances of this job type: [{ id, data }]
+//         add(data)   start a new instance
+//         remove(id)  delete an instance
+//   run(data, client) - called every loop tick; may update `data`; returns true when complete
 const jobs = {};
 const jobsDir = path.join(__dirname, 'Jobs');
 for (const name of fs.readdirSync(jobsDir)) {
@@ -27,23 +30,31 @@ for (const name of fs.readdirSync(jobsDir)) {
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.once(Events.ClientReady, async () => {
-  await client.application.commands.set(Object.values(jobs).map(j => j.command));
+  await client.application.commands.set(Object.values(jobs).flatMap(j => j.commands));
   console.log(t('console.logged_in', { tag: client.user.tag, jobs: Object.keys(jobs).join(', ') }));
   console.log(t('console.invite', { url: `https://discord.com/oauth2/authorize?client_id=${process.env.APP_ID}&scope=bot+applications.commands&permissions=562949953489920` }));
   setInterval(loop, LOOP_SECONDS * 1000);
 });
 
 client.on(Events.InteractionCreate, async interaction => {
-  if (!interaction.isChatInputCommand() || !interaction.guildId) return;
-  const type = Object.keys(jobs).find(name => jobs[name].command.name === interaction.commandName);
+  if (!interaction.guildId) return;
+  const type = Object.keys(jobs).find(name =>
+    interaction.isChatInputCommand() ? jobs[name].commands.some(c => c.name === interaction.commandName)
+      : interaction.isMessageComponent() && interaction.customId.startsWith(`${name}:`));
   if (!type) return;
 
   const server = db.get(interaction.guildId);
-  const existing = server.jobs.filter(j => j.type === type).map(j => j.data);
-  const data = await jobs[type].create(interaction, existing);
-  if (!data) return;
-  server.jobs.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), type, data });
-  db.save(interaction.guildId);
+  const before = JSON.stringify(server.jobs);
+  try {
+    await jobs[type].handle(interaction, {
+      jobs: server.jobs.filter(j => j.type === type),
+      add: data => server.jobs.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), type, data }),
+      remove: id => { server.jobs = server.jobs.filter(j => j.id !== id); },
+    });
+  } catch (err) {
+    console.error(t('console.handler_failed', { type, error: err.message }));
+  }
+  if (JSON.stringify(server.jobs) !== before) db.save(interaction.guildId);
 });
 
 let running = false;
@@ -53,6 +64,7 @@ async function loop() {
   try {
     for (const serverId of db.list()) {
       const server = db.get(serverId);
+      const before = JSON.stringify(server.jobs);
       const finished = [];
       for (const job of server.jobs) {
         try {
@@ -62,10 +74,8 @@ async function loop() {
           finished.push(job.id);
         }
       }
-      if (finished.length) {
-        server.jobs = server.jobs.filter(j => !finished.includes(j.id));
-        db.save(serverId);
-      }
+      server.jobs = server.jobs.filter(j => !finished.includes(j.id));
+      if (JSON.stringify(server.jobs) !== before) db.save(serverId);
     }
   } finally {
     running = false;

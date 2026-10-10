@@ -41,7 +41,7 @@ async function fetchMessage(channel, id) {
 }
 
 module.exports = {
-  command: {
+  commands: [{
     name: t('command'),
     description: t('description'),
     options: [
@@ -51,9 +51,10 @@ module.exports = {
       { name: opt('message'), description: opt('message_description'), type: 3, max_length: 1000 },
       { name: opt('dayoffset'), description: opt('dayoffset_description'), type: 4, min_value: 0, max_value: 30 },
     ],
-  },
+  }],
 
-  async create(interaction, existing) {
+  async handle(interaction, ctx) {
+    const existing = ctx.jobs.map(j => j.data);
     const ephemeral = content => interaction.reply({ content, flags: MessageFlags.Ephemeral });
 
     // Only one vote per server.
@@ -61,7 +62,7 @@ module.exports = {
       const vote = existing[0];
       const closes = Math.floor((vote ? vote.endsAt : Date.now() + POLL_HOURS * 3600 * 1000) / 1000);
       await ephemeral(t('already_running', { link: vote ? link(interaction.guildId, vote) : '', closes }));
-      return null;
+      return;
     }
 
     const days = interaction.options.getInteger(opt('days')) ?? DEFAULT_DAYS;
@@ -73,7 +74,7 @@ module.exports = {
     const match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(time);
     if (!match) {
       await ephemeral(t('bad_time', { time }));
-      return null;
+      return;
     }
 
     const now = new Date();
@@ -98,14 +99,14 @@ module.exports = {
         },
       });
 
-      return {
+      ctx.add({
         channelId: interaction.channelId,
         pollId: pollMsg.id,
         timesId: timesMsg.id,
         name,
         times,
         endsAt: pollMsg.poll?.expiresTimestamp ?? Date.now() + POLL_HOURS * 3600 * 1000,
-      };
+      });
     } finally {
       starting.delete(interaction.guildId);
     }
