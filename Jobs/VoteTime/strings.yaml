@@ -25,11 +25,11 @@ defaults:
 poll_option: "{weekday} {day} {month}, {utc} UTC ({london} London)"
 
 # Message posted right before the poll, showing every option in each viewer's local time.
-local_times_header: "**{name}**\n{message}\n\nHere are the options translated to your local time:"
+local_times_header: "# {name}\n{message}\n\nHere are the options translated to your local time:"
 local_times_line: "{emoji} <t:{time}:F>, <t:{time}:R>"
 
-result: "**{name}**\nThe poll has closed. See you all on:\n\n# <t:{time}:F>, <t:{time}:R>"
-no_votes: "**{name}**\nThe poll has closed with no votes."
+result: "# {name}\nThe poll has closed. See you all on:\n\n **<t:{time}:F>, <t:{time}:R>**"
+no_votes: "# {name}\nThe poll has closed with no votes."
 
 already_running: "A time vote is already running: {link}\nIt closes <t:{closes}:R> (<t:{closes}:f>).\nIf an admin deletes the poll, a new one can be started."
 bad_time: "Invalid time `{time}`. Use HH:MM in UTC, e.g. 17:00."
