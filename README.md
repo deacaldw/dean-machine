@@ -50,7 +50,7 @@ Jobs/
 - `commands`: the job's slash command definitions
 - `handle(interaction, ctx)`: handles the job's slash commands, plus any button or select menu whose `customId`
   starts with `<Job>:` (e.g. `Announce:stop`). `ctx.jobs` lists this job type's running instances on the server
-  as `{ id, data }`; `ctx.add(data)` starts a new one and `ctx.remove(id)` deletes one.
+  as `{ id, data }`; `ctx.add(data)` starts a new one (returning its id) and `ctx.remove(id)` deletes one.
 - `run(data, client)`: called every loop tick. It may update `data` (changes are saved automatically).
   Return `true` when the job is finished and it is removed from the database.
 

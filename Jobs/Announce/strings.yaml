@@ -24,6 +24,8 @@ text_intro: "**{username}** says: {mentions}"
 
 # Replies only the user sees.
 scheduled: "Announcement scheduled: posts {when}, {repeat}."
+preview: "**Preview:**"
+delete_button: "Delete"
 scheduled_now: "now"
 scheduled_later: "<t:{time}:R> (<t:{time}:f>)"
 scheduled_once: "once"

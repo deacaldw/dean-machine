@@ -1,9 +1,11 @@
 const path = require('path');
-const { MessageFlags, PermissionFlagsBits, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
+const { MessageFlags, PermissionFlagsBits, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const t = require('../../strings')(__dirname);
 const opt = key => t(`options.${key}`);
 
-const STOP_MENU = `${path.basename(__dirname)}:stop`; // customId; the core routes "<Job>:" to this job
+// customIds; the core routes "<Job>:..." to this job
+const STOP_MENU = `${path.basename(__dirname)}:stop`;
+const DELETE_BUTTON = `${path.basename(__dirname)}:delete:`; // + job id
 const MIN_REPEAT = 300; // minutes
 const MAX_REPEAT = 31 * 24 * 60; // minutes
 const USER_MAX = 2; // per member without Manage Server
@@ -62,11 +64,7 @@ async function announce(interaction, ctx) {
   }
 
   const nextAt = Date.now() + delay * 60000;
-  await ephemeral(interaction, t('scheduled', {
-    when: delay ? t('scheduled_later', { time: Math.floor(nextAt / 1000) }) : t('scheduled_now'),
-    repeat: repeat ? t('scheduled_repeat', { interval: duration(repeat) }) : t('scheduled_once'),
-  }));
-  ctx.add({
+  const data = {
     channelId: interaction.channelId,
     userId: interaction.user.id,
     username: interaction.member?.displayName ?? interaction.user.username,
@@ -75,7 +73,28 @@ async function announce(interaction, ctx) {
     repeat,
     nextAt,
     postIds: [],
+  };
+  const id = ctx.add(data);
+
+  // Confirmation with a preview of the post and a button to delete it again.
+  const scheduled = t('scheduled', {
+    when: delay ? t('scheduled_later', { time: Math.floor(nextAt / 1000) }) : t('scheduled_now'),
+    repeat: repeat ? t('scheduled_repeat', { interval: duration(repeat) }) : t('scheduled_once'),
   });
+  const preview = post(data);
+  const button = new ButtonBuilder().setCustomId(DELETE_BUTTON + id).setLabel(t('delete_button')).setStyle(ButtonStyle.Danger);
+  try {
+    await interaction.reply({
+      content: cut([scheduled, t('preview'), preview.content].filter(Boolean).join('\n'), 2000),
+      embeds: preview.embeds,
+      components: [new ActionRowBuilder().addComponents(button)],
+      allowedMentions: { parse: [] },
+      flags: MessageFlags.Ephemeral,
+    });
+  } catch (err) {
+    ctx.remove(id);
+    throw err;
+  }
 }
 
 async function showStopMenu(interaction, ctx) {
@@ -90,8 +109,9 @@ async function showStopMenu(interaction, ctx) {
   await interaction.reply({ content: t('pick_to_stop'), components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
 }
 
-async function stop(interaction, ctx) {
-  const job = ctx.jobs.find(j => j.id === interaction.values[0]);
+// Stops a job chosen from the /stop-announce menu or with the Delete button.
+async function stop(interaction, ctx, id) {
+  const job = ctx.jobs.find(j => j.id === id);
   let content;
   if (!job) content = t('already_gone');
   else if (!isAdmin(interaction) && job.data.userId !== interaction.user.id) content = t('not_allowed');
@@ -99,7 +119,7 @@ async function stop(interaction, ctx) {
     ctx.remove(job.id);
     content = cut(t('stopped', { message: job.data.message }), 2000);
   }
-  await interaction.update({ content, components: [], allowedMentions: { parse: [] } });
+  await interaction.update({ content, embeds: [], components: [], allowedMentions: { parse: [] } });
 }
 
 module.exports = {
@@ -120,7 +140,8 @@ module.exports = {
     if (interaction.isChatInputCommand()) {
       return interaction.commandName === t('command') ? announce(interaction, ctx) : showStopMenu(interaction, ctx);
     }
-    if (interaction.customId === STOP_MENU) return stop(interaction, ctx);
+    if (interaction.customId === STOP_MENU) return stop(interaction, ctx, interaction.values[0]);
+    if (interaction.customId.startsWith(DELETE_BUTTON)) return stop(interaction, ctx, interaction.customId.slice(DELETE_BUTTON.length));
   },
 
   async run(data, client) {
