@@ -85,7 +85,11 @@ module.exports = {
 
     starting.add(interaction.guildId);
     try {
-      await interaction.reply({
+      const lines = times.map((time, i) => t('local_times_line', { emoji: emojis[i], time }));
+      await interaction.reply(t('local_times_header', { name, message }) + '\n' + lines.join('\n'));
+      const timesMsg = await interaction.fetchReply();
+
+      const pollMsg = await interaction.followUp({
         poll: {
           question: { text: name },
           answers: times.map((time, i) => ({ text: optionText(time), emoji: emojis[i] })),
@@ -93,10 +97,6 @@ module.exports = {
           allowMultiselect: true,
         },
       });
-      const pollMsg = await interaction.fetchReply();
-
-      const lines = times.map((time, i) => t('local_times_line', { emoji: emojis[i], time }));
-      const timesMsg = await interaction.followUp(t('local_times_header', { name, message }) + '\n' + lines.join('\n'));
 
       return {
         channelId: interaction.channelId,
