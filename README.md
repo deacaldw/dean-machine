@@ -28,18 +28,16 @@ Copy the whole folder to the target machine. `Servers/` is created next to the e
 
 ### Debian service
 
-From the copied `dist/linux` folder:
+Put the `dist/linux` folder where you want the bot to live, then from inside it:
 
 ```
-sudo bash install.sh
+sudo bash setup.sh
 ```
 
-This installs the bot to `/opt/deanmachine` and runs it as the `deanmachine` systemd service, as its own
-`deanmachine` user. It starts on boot and restarts 5 seconds after any crash. Re-run it with a newer build to update;
-the existing `.env` and `Servers/` data are kept.
+This registers the `deanmachine` executable in that folder as the `deanmachine` systemd service. It runs as the user
+who ran `sudo`, starts on boot, and restarts 5 seconds after any crash. Logs: `journalctl -u deanmachine -f`
 
-- Logs: `journalctl -u deanmachine -f`
-- Remove the service: `sudo bash /opt/deanmachine/uninstall.sh` (add `--purge` to also delete its files, data and user)
+Once the bot has logged in, its invite link is also saved to `invite.txt` next to the executable.
 Default strings are built into the executable. To override, put a copy at the same relative path next to it
 (e.g. `strings.yaml` or `Jobs/VoteTime/strings.yaml`).
 

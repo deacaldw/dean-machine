@@ -4,6 +4,7 @@
 console:
   logged_in: "Logged in as {tag}. Jobs: {jobs}"
   invite: "Invite: {url}"
+  invite_write_failed: "Could not write the invite link to {path}: {error}"
   missing_token: "DISCORD_TOKEN is missing. Put it in {path}"
   job_failed: "Job {type} ({id}) failed: {error}"
   handler_failed: "Handling a {type} interaction failed: {error}"

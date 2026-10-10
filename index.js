@@ -32,7 +32,15 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 client.once(Events.ClientReady, async () => {
   await client.application.commands.set(Object.values(jobs).flatMap(j => j.commands));
   console.log(t('console.logged_in', { tag: client.user.tag, jobs: Object.keys(jobs).join(', ') }));
-  console.log(t('console.invite', { url: `https://discord.com/oauth2/authorize?client_id=${process.env.APP_ID}&scope=bot+applications.commands&permissions=562949953489920` }));
+  // Also save the invite link next to the executable, since a service's stdout is easy to miss.
+  const invite = `https://discord.com/oauth2/authorize?client_id=${process.env.APP_ID}&scope=bot+applications.commands&permissions=562949953489920`;
+  const inviteFile = path.join(baseDir, 'invite.txt');
+  console.log(t('console.invite', { url: invite }));
+  try {
+    fs.writeFileSync(inviteFile, invite + '\n');
+  } catch (err) {
+    console.error(t('console.invite_write_failed', { path: inviteFile, error: err.message }));
+  }
   setInterval(loop, LOOP_SECONDS * 1000);
 });
 

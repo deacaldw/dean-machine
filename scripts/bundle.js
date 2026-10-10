@@ -1,7 +1,7 @@
 // Runs after `pkg`: puts each executable in its own folder with everything needed to run it.
 //   dist/windows/  deanmachine.exe + .env + editable strings
-//   dist/linux/    deanmachine     + .env + editable strings + install.sh/uninstall.sh
-// Anything in deploy/<target>/ (e.g. deploy/linux/install.sh) is copied in too.
+//   dist/linux/    deanmachine     + .env + editable strings + setup.sh
+// Anything in deploy/<target>/ (e.g. deploy/linux/setup.sh) is copied in too.
 const fs = require('fs');
 const path = require('path');
 
