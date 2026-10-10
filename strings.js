@@ -5,7 +5,7 @@ const yaml = require('js-yaml');
 const baseDir = process.pkg ? path.dirname(process.execPath) : __dirname;
 
 // Returns a t() function for the strings.yaml in `dir`.
-// A copy at the same relative path next to the exe (e.g. Jobs/Timer/strings.yaml)
+// A copy at the same relative path next to the exe (e.g. Jobs/VoteTime/strings.yaml)
 // overrides the bundled one, so strings can be edited without rebuilding.
 module.exports = function load(dir) {
   const bundled = path.join(dir, 'strings.yaml');
@@ -15,7 +15,7 @@ module.exports = function load(dir) {
 
   const get = key => key.split('.').reduce((obj, k) => obj?.[k], strings);
 
-  // t('done', { username: 'Bob' }) -> "Bob, your timer is up."
+  // t('result', { name: 'Raid', time: 1791738000 }) fills in {name} and {time}
   function t(key, vars = {}) {
     const value = get(key);
     if (typeof value !== 'string') return key;

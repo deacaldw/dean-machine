@@ -26,12 +26,12 @@ This creates two ready-to-deploy folders, each with the executable, a copy of `.
 
 Copy the whole folder to the target machine. `Servers/` is created next to the executable on first run.
 Default strings are built into the executable. To override, put a copy at the same relative path next to it
-(e.g. `strings.yaml` or `Jobs/Timer/strings.yaml`).
+(e.g. `strings.yaml` or `Jobs/VoteTime/strings.yaml`).
 
 ## Messages
 
 All strings live in YAML files: core bot messages in `strings.yaml`, and each job's in `Jobs/<Job>/strings.yaml`.
-Edit them to restyle messages (Discord markdown and emoji work). Placeholders like `{username}` are filled in by the bot.
+Edit them to restyle messages (Discord markdown and emoji work). Placeholders like `{name}` are filled in by the bot.
 
 ## Jobs
 
@@ -39,7 +39,7 @@ Each job is a self-contained folder in `Jobs/`. The folder name is the job type:
 
 ```
 Jobs/
-  Timer/
+  VoteTime/
     job.js        # the job's code
     strings.yaml  # the job's strings
 ```
@@ -47,7 +47,8 @@ Jobs/
 `job.js` loads its own strings with `const t = require('../../strings')(__dirname);` and exports:
 
 - `command`: the slash command that creates the job
-- `create(interaction)`: replies to the user and returns the job's data
+- `create(interaction, existing)`: replies to the user and returns the job's data (or `null` to not start a job);
+  `existing` is the data of this job type's instances already running on the server
 - `run(data, client)`: called every loop tick; return `true` when the job is finished and it is removed from the database
 
 To add a job, add a new folder. No other code changes are needed.
@@ -57,7 +58,7 @@ Server database format:
 ```json
 {
   "jobs": [
-    { "id": "lx3k9a1b", "type": "Timer", "data": { "userId": "...", "username": "...", "channelId": "...", "endsAt": 1760000000000 } }
+    { "id": "lx3k9a1b", "type": "VoteTime", "data": { "channelId": "...", "pollId": "...", "timesId": "...", "name": "Next Session", "times": [1791738000, 1791824400, 1791910800], "endsAt": 1791698186389 } }
   ]
 }
 ```
