@@ -2,15 +2,21 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 
-// Prefer strings.yaml next to the exe so it can be edited without rebuilding;
-// fall back to the copy bundled with the code.
-const external = path.join(process.pkg ? path.dirname(process.execPath) : __dirname, 'strings.yaml');
-const file = fs.existsSync(external) ? external : path.join(__dirname, 'strings.yaml');
-const strings = yaml.load(fs.readFileSync(file, 'utf8'));
+const baseDir = process.pkg ? path.dirname(process.execPath) : __dirname;
 
-// t('timer.done', { username: 'Bob' }) -> "Bob, your timer is up."
-module.exports = function t(key, vars = {}) {
-  const value = key.split('.').reduce((obj, k) => obj?.[k], strings);
-  if (typeof value !== 'string') return key;
-  return value.replace(/\{(\w+)\}/g, (match, name) => (name in vars ? vars[name] : match));
+// Returns a t() function for the strings.yaml in `dir`.
+// A copy at the same relative path next to the exe (e.g. Jobs/Timer/strings.yaml)
+// overrides the bundled one, so strings can be edited without rebuilding.
+module.exports = function load(dir) {
+  const bundled = path.join(dir, 'strings.yaml');
+  const external = path.join(baseDir, path.relative(__dirname, dir), 'strings.yaml');
+  const file = fs.existsSync(external) ? external : bundled;
+  const strings = yaml.load(fs.readFileSync(file, 'utf8'));
+
+  // t('done', { username: 'Bob' }) -> "Bob, your timer is up."
+  return function t(key, vars = {}) {
+    const value = key.split('.').reduce((obj, k) => obj?.[k], strings);
+    if (typeof value !== 'string') return key;
+    return value.replace(/\{(\w+)\}/g, (match, name) => (name in vars ? vars[name] : match));
+  };
 };

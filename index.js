@@ -7,18 +7,20 @@ require('dotenv').config({ path: path.join(baseDir, '.env') });
 
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const db = require('./db')(path.join(baseDir, 'Servers'));
-const t = require('./strings');
+const t = require('./strings')(__dirname);
 
 const LOOP_SECONDS = Number(process.env.LOOP_SECONDS) || 2;
 
-// Load every job type from Jobs/. Each job module exports:
+// Load every job type from Jobs/<Name>/job.js. The folder name is the job type.
+// Each job module exports:
 //   command  - slash command definition
 //   create(interaction) -> job data object (or null to skip)
 //   run(data, client)   -> true when the job is complete
 const jobs = {};
 const jobsDir = path.join(__dirname, 'Jobs');
-for (const file of fs.readdirSync(jobsDir).filter(f => f.endsWith('.js'))) {
-  jobs[path.basename(file, '.js')] = require(path.join(jobsDir, file));
+for (const name of fs.readdirSync(jobsDir)) {
+  const file = path.join(jobsDir, name, 'job.js');
+  if (fs.existsSync(file)) jobs[name] = require(file);
 }
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -32,7 +34,7 @@ client.once(Events.ClientReady, async () => {
 
 client.on(Events.InteractionCreate, async interaction => {
   if (!interaction.isChatInputCommand() || !interaction.guildId) return;
-  const type = Object.keys(jobs).find(t => jobs[t].command.name === interaction.commandName);
+  const type = Object.keys(jobs).find(name => jobs[name].command.name === interaction.commandName);
   if (!type) return;
 
   const data = await jobs[type].create(interaction);

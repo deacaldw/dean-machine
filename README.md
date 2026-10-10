@@ -18,20 +18,32 @@ npm run build
 
 This creates `dist/deanmachine-win.exe` (Windows x64) and `dist/deanmachine-linux` (Debian x64).
 Put `.env` in the same folder as the executable. `Servers/` is created there too.
-A default `strings.yaml` is built into the executable; put a copy next to it to override.
+Default strings are built into the executable. To override, put a copy at the same relative path next to it
+(e.g. `strings.yaml` or `Jobs/Timer/strings.yaml`).
 
 ## Messages
 
-Every string the bot uses lives in `strings.yaml`. Edit it to restyle messages (Discord markdown and emoji work).
-Placeholders like `{username}` are filled in by the bot. In code, use `t('timer.done', { username })` from `strings.js`.
+All strings live in YAML files: core bot messages in `strings.yaml`, and each job's in `Jobs/<Job>/strings.yaml`.
+Edit them to restyle messages (Discord markdown and emoji work). Placeholders like `{username}` are filled in by the bot.
 
 ## Jobs
 
-Each file in `Jobs/` is a job type and exports:
+Each job is a self-contained folder in `Jobs/`. The folder name is the job type:
+
+```
+Jobs/
+  Timer/
+    job.js        # the job's code
+    strings.yaml  # the job's strings
+```
+
+`job.js` loads its own strings with `const t = require('../../strings')(__dirname);` and exports:
 
 - `command`: the slash command that creates the job
 - `create(interaction)`: replies to the user and returns the job's data
 - `run(data, client)`: called every loop tick; return `true` when the job is finished and it is removed from the database
+
+To add a job, add a new folder. No other code changes are needed.
 
 Server database format:
 
@@ -43,6 +55,3 @@ Server database format:
 }
 ```
 
-## Commands
-
-- `/set-timer <seconds>`: replies `<username>, your timer is up.` when it runs out.

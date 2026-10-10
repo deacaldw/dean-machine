@@ -10,10 +10,11 @@
   },
   "pkg": {
     "scripts": [
-      "Jobs/*.js"
+      "Jobs/*/job.js"
     ],
     "assets": [
-      "strings.yaml"
+      "strings.yaml",
+      "Jobs/*/strings.yaml"
     ],
     "targets": [
       "node22-win-x64",
