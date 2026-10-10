@@ -7,7 +7,8 @@ cd "$(dirname "$0")"
 npm install
 npm test
 rm -rf bin
-npx pkg . --out-path bin
+# No bytecode: V8 bytecode built on one OS is rejected on another, so ship plain source.
+npx pkg . --out-path bin --no-bytecode --public-packages "*" --public
 
 mkdir -p bin/windows bin/linux
 mv bin/deanmachine-win.exe bin/windows/deanmachine.exe
