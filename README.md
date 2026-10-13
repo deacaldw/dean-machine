@@ -7,11 +7,15 @@ A Discord bot for multiple servers. Each feature is a self-contained **skill**; 
 
 - **VoteTime** – `/vote-time`: a 24h poll to pick the next game session time, shown in everyone's local time.
 - **Announce** – `/announce`, `/stop-announce`: one-off or repeating announcements.
+- **TwentyQuestions** – `/20questions`, `/20questions-stop`: a co-op guessing game about a random Wikipedia topic,
+  played in a thread and refereed by Claude.
 
 ## Setup
 
 1. Install Node.js 22+ and run `npm install`.
-2. Copy `res/.env.example` to `res/.env` and set `DISCORD_TOKEN` and `APP_ID`.
+2. Copy `res/.env.example` to `res/.env` and set `DISCORD_TOKEN`, `APP_ID` and `ANTHROPIC_API_KEY`
+   (optionally `UNSPLASH_ACCESS_KEY` for topic photos and `GIPHY_API_KEY` for GIFs in 20 Questions).
+   In the Discord Developer Portal, enable **Message Content Intent** on the Bot page.
 3. `npm start`. The bot prints an invite link (also saved to `invite.txt`).
 
 ## Build
@@ -44,4 +48,5 @@ Add `Skills/<Name>/skill.js` and `Skills/<Name>/strings.yaml`. Load strings with
 - `handle(interaction, ctx)`: handles the commands, plus buttons and menus whose `customId` starts with `<Name>:`.
   `ctx.jobs` lists this skill's jobs on the server (`{ id, data }`); `ctx.add(data)` returns a new job id;
   `ctx.remove(id)` deletes a job.
+- `message(message, ctx)` (optional): called for every message people post in the server.
 - `run(data, client)`: called every tick for each job. Changes to `data` are saved. Return `true` when done.
