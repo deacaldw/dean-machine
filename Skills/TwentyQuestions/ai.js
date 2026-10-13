@@ -1,12 +1,15 @@
-// Claude calls for 20 Questions. Cheap model for frequent calls, stronger model for writing.
-// Reasoning is off on both to keep costs down.
+// Claude calls for 20 Questions: Haiku (fast) for cheap, frequent work and Sonnet (accurate) for judging and
+// writing. Reasoning is off on both to keep costs down.
 const Anthropic = require('@anthropic-ai/sdk').default;
 const t = require('../../src/strings')(__dirname);
 const { count } = require('./stats');
 
-const FAST = { model: 'claude-haiku-5-5', thinking: { type: 'disabled' } }; // screening topics, reading messages
-const SMART = { model: 'claude-sonnet-5-5', thinking: { type: 'between_tools' } }; // riddle, verifying wins, hints, wrap-up
-const SCREEN_TEXT = 4000; // the opening of the article is enough to screen a topic
+const FAST = { name: 'fast', model: 'claude-haiku-5-5', thinking: { type: 'disabled' } };
+const ACCURATE = { name: 'accurate', model: 'claude-sonnet-5-5', thinking: { type: 'between_tools' } };
+const INTRO = 6000; // characters of the article used when the whole text isn't needed
+
+let client;
+const anthropic = () => (client ??= new Anthropic()); // reads ANTHROPIC_API_KEY
 
 // Plain text for Discord: typographic quotes, dashes and spaces become simple ones; invisible characters go.
 function sanitize(text) {
@@ -25,111 +28,92 @@ const sanitizeAll = value => (typeof value === 'string' ? sanitize(value)
     : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, sanitizeAll(v)]))
       : value);
 
-let client;
-const anthropic = () => (client ??= new Anthropic()); // reads ANTHROPIC_API_KEY
-
-const strictObject = properties => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
+// JSON schema helpers
+const object = properties => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
+const text = { type: 'string' };
+const yesNo = { type: 'boolean' };
+const list = { type: 'array', items: text };
 const oneOf = values => ({ type: 'string', enum: values });
-const entry = strictObject({ username: { type: 'string' }, text: { type: 'string' } });
+const pick = object({ username: text, text });
 
-function articleBlock(article) {
-  const aliases = article.aliases.length ? `\nAlternative names: ${article.aliases.join('; ')}` : '';
-  return `<article title="${article.title}">${aliases}\n\n${article.text}\n</article>`;
-}
+const articleText = (article, length) => `<article title="${article.title}">\n${article.text.slice(0, length)}\n</article>`;
+const lines = items => (items.length ? items.map(item => `- ${item}`).join('\n') : '(none)');
+const logText = log => (log.length ? log.map((e, i) => `${i + 1}. ${e.username}: ${e.text} -> ${e.result}`).join('\n') : '(none)');
 
-// One request. The article comes first so repeated calls about the same game hit the prompt cache.
-async function ask({ model, thinking }, article, instructions, user, { schema, effort = 'low', maxTokens = 2000 } = {}) {
-  count(model === FAST.model ? 'fast' : 'smart');
+// One request. The article (if any) comes first and is cached, since quote searches repeat it for every question.
+async function call(model, { article, prompt, input, schema, maxTokens = 1500 }) {
+  count(model.name);
+  const system = [];
+  if (article) system.push({ type: 'text', text: article, cache_control: { type: 'ephemeral' } });
+  system.push({ type: 'text', text: prompt });
   const res = await anthropic().messages.create({
-    model,
-    thinking,
+    model: model.model,
+    thinking: model.thinking,
     max_tokens: maxTokens,
-    system: [
-      { type: 'text', text: articleBlock(article) },
-      { type: 'text', text: instructions, cache_control: { type: 'ephemeral' } },
-    ],
-    messages: [{ role: 'user', content: user }],
-    output_config: { effort, ...(schema && { format: { type: 'json_schema', schema } }) },
+    system,
+    messages: [{ role: 'user', content: input }],
+    output_config: { effort: 'low', ...(schema && { format: { type: 'json_schema', schema } }) },
   });
   if (res.stop_reason === 'refusal') throw new Error('Claude declined the request');
-  const text = res.content.filter(b => b.type === 'text').map(b => b.text).join('').trim();
-  return sanitizeAll(schema ? JSON.parse(text) : text);
+  const out = res.content.filter(b => b.type === 'text').map(b => b.text).join('').trim();
+  return sanitizeAll(schema ? JSON.parse(out) : out);
 }
 
-const logText = log => log.map((e, i) => `#${i + 1} ${e.username} (${e.intent}): ${e.text}${e.answer ? ` → ${e.answer}` : ''}`).join('\n') || '(nothing yet)';
+// What Sonnet knows about the game when judging a question or writing a hint: never the article, only quotes.
+const gameText = (game, quotes) => t('prompts.game', {
+  title: game.article.title,
+  answers: game.answers.join(', '),
+  quotes: lines(quotes),
+  log: logText(game.log),
+  hints: lines(game.hints),
+});
 
 module.exports = {
   sanitize,
   sanitizeAll,
 
-  // Is the topic family-friendly, guessable with some effort, and specific enough? -> { suitable, guessable, specific }
-  async screen(article) {
-    const opening = { ...article, text: article.text.slice(0, SCREEN_TEXT) };
-    return ask(FAST, opening, t('prompts.screen'), 'Screen this topic.', {
-      schema: strictObject({ suitable: { type: 'boolean' }, guessable: { type: 'boolean' }, specific: { type: 'boolean' } }),
-    });
-  },
+  // -> { suitable, guessable }
+  screen: article => call(FAST, {
+    article: articleText(article, INTRO), prompt: t('prompts.screen'), input: 'Judge this article.',
+    schema: object({ suitable: yesNo, guessable: yesNo }),
+  }),
 
-  // The opening: a riddle poem, a broad topic that doesn't give the answer away, and a photo search.
-  // -> { poem, topic, image_queries }
-  async opening(article) {
-    return ask(SMART, article, t('prompts.opening'), 'Write the opening.', {
-      schema: strictObject({ poem: { type: 'string' }, topic: { type: 'string' }, image_queries: { type: 'array', items: { type: 'string' } } }),
-    });
-  },
+  // -> { topic, searches }
+  setup: article => call(FAST, {
+    article: articleText(article, INTRO), prompt: t('prompts.setup'), input: 'Set up the game.',
+    schema: object({ topic: text, searches: list }),
+  }),
 
-  // Looks at candidate photos and returns the 1-based number of a suitable one, or 0 for none.
-  // The images are downloaded here and sent as data, which is more reliable than letting the API fetch them.
-  async pickPhoto(article, topic, photos) {
-    const images = await Promise.all(photos.map(async p => {
-      const res = await fetch(p.preview);
-      if (!res.ok) throw new Error(`Image download returned ${res.status}`);
-      const media_type = (res.headers.get('content-type') ?? 'image/jpeg').split(';')[0];
-      return { type: 'base64', media_type, data: Buffer.from(await res.arrayBuffer()).toString('base64') };
-    }));
-    const content = images.flatMap((source, i) => [{ type: 'text', text: `Photo ${i + 1}:` }, { type: 'image', source }]);
-    content.push({ type: 'text', text: 'Which photo should we use?' });
-    const result = await ask(SMART, article, t('prompts.photo', { topic }), content, {
-      schema: strictObject({ choice: { type: 'integer' } }),
-    });
-    return result.choice;
-  },
+  // -> { poem, answers }
+  opening: article => call(ACCURATE, {
+    article: articleText(article, INTRO), prompt: t('prompts.opening'), input: 'Write the opening.',
+    schema: object({ poem: text, answers: list }),
+  }),
 
-  // -> { intent, answer, guess }
-  async interpret(article, log, username, message) {
-    return ask(FAST, article, t('prompts.interpret'), `Game so far:\n${logText(log)}\n\nNewest message from ${username}:\n${message}`, {
-      schema: strictObject({
-        intent: oneOf(['question', 'guess', 'hint', 'stop', 'chat']),
-        answer: oneOf(['yes', 'yes_more_specific', 'no', 'sort_of', 'not_quite', 'none']),
-        guess: { type: 'string' },
-      }),
-    });
-  },
+  // -> 'ask' | 'hint' | 'stop' | 'chat'
+  route: async message => (await call(FAST, {
+    prompt: t('prompts.route'), input: message, maxTokens: 200,
+    schema: object({ route: oneOf(['ask', 'hint', 'stop', 'chat']) }),
+  })).route,
 
-  // Second opinion before declaring a win -> 'yes' | 'yes_more_specific' | 'not_quite' | 'no'
-  async verify(article, guess) {
-    const result = await ask(SMART, article, t('prompts.verify', { guess }), 'Judge the guess.', {
-      schema: strictObject({ answer: oneOf(['yes', 'yes_more_specific', 'not_quite', 'no']) }),
-    });
-    return result.answer;
-  },
+  // Passages from the whole article that help with `need` -> [quote]
+  quotes: async (article, need) => (await call(FAST, {
+    article: articleText(article), prompt: t('prompts.quotes'), input: need,
+    schema: object({ quotes: list }),
+  })).quotes,
 
-  async hint(article, log, hints) {
-    const given = hints.length ? hints.map(h => `- ${h}`).join('\n') : '(none)';
-    return ask(SMART, article, t('prompts.hint'), `Game so far:\n${logText(log)}\n\nHints already given:\n${given}`);
-  },
+  // -> 'win' | 'yes' | 'no' | 'sort_of'
+  judge: async (game, question, quotes) => (await call(ACCURATE, {
+    prompt: gameText(game, quotes), input: t('prompts.judge', { question }), maxTokens: 300,
+    schema: object({ result: oneOf(['win', 'yes', 'no', 'sort_of']) }),
+  })).result,
+
+  hint: (game, quotes) => call(ACCURATE, { prompt: gameText(game, quotes), input: t('prompts.hint'), maxTokens: 300 }),
 
   // -> { infocard, most_valuable_question, closest_guess, farthest_guess, related_guess }
-  async wrapUp(article, log, outcome) {
-    return ask(SMART, article, t('prompts.wrap_up', { outcome }), `Game log:\n${logText(log)}`, {
-      maxTokens: 4000,
-      schema: strictObject({
-        infocard: { type: 'string' },
-        most_valuable_question: entry,
-        closest_guess: entry,
-        farthest_guess: entry,
-        related_guess: entry,
-      }),
-    });
-  },
+  wrapUp: (game, outcome) => call(ACCURATE, {
+    article: articleText(game.article, INTRO), prompt: t('prompts.wrap_up', { outcome }), input: `Game log:\n${logText(game.log)}`,
+    maxTokens: 3000,
+    schema: object({ infocard: text, most_valuable_question: pick, closest_guess: pick, farthest_guess: pick, related_guess: pick }),
+  }),
 };

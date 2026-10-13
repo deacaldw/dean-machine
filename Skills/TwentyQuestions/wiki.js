@@ -40,13 +40,13 @@ const sources = {
   },
 };
 
-// Full text, image, URL and alternative names (redirects) of an article, or null if unsuitable.
+// Full text, image and URL of an article, or null if it's a stub, list or disambiguation page.
 async function article(title) {
   const data = await api('en.wikipedia.org', {
     action: 'query', redirects: 1, titles: title,
-    prop: 'extracts|pageimages|info|pageprops|redirects',
+    prop: 'extracts|pageimages|info|pageprops',
     explaintext: 1, piprop: 'thumbnail', pithumbsize: 800, inprop: 'url',
-    ppprop: 'disambiguation', rdlimit: 'max', rdnamespace: 0,
+    ppprop: 'disambiguation',
   });
   const page = data.query?.pages?.[0];
   if (!page || page.missing || page.pageprops?.disambiguation !== undefined) return null;
@@ -55,7 +55,6 @@ async function article(title) {
     title: page.title,
     url: page.fullurl,
     image: page.thumbnail?.source ?? null,
-    aliases: (page.redirects ?? []).map(r => r.title).slice(0, 50),
     text: page.extract.slice(0, MAX_TEXT),
   };
 }
