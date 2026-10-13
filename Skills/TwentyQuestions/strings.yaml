@@ -9,11 +9,13 @@ stop_description: "Stop the 20 Questions game in this channel"
 already_running: "A game is already running on this server: {link}\nPlease wait until it's over."
 not_here: "Start the game in a normal text channel, not in a thread."
 picking: "🤔 Thinking of something…"
-# GIPHY searches. GIPHY asks apps to credit it wherever its GIFs are shown.
+# Added once a GIF is found. A masked link hides the URL while Discord still plays the GIF.
+picking_with_gif: "{picking} [.]({url})"
+# GIPHY searches. GIPHY is credited in the credit line at the start of each game.
 gif_queries:
   thinking: "thinking" # while the game is being set up
   so_close: "so close" # on a close answer, at most every few minutes
-gif_credit: "Powered by GIPHY"
+gif_credit: "Gifs in this game are powered by GIPHY."
 start_failed: "Sorry, I couldn't start a game right now. Please try again in a minute."
 started: "🎯 **{username}** started a game of **20 Questions**! Join the thread below."
 thread_name: "20 Questions: {topic}"
@@ -21,21 +23,36 @@ no_game: "There's no 20 Questions game running in this channel."
 stop_not_allowed: "Only the player who started the game or someone with Manage Server can stop it."
 stop_done: "Game stopped."
 
+# How the topic was picked, shown only to the player who started the game. Never names the answer.
+report:
+  title: "🔍 **How I picked this one**"
+  first_try: "The first idea I checked was a good one, so I went with it."
+  broad_one: "I thought about {list}, but it was too broad."
+  broad_many: "I thought about {list}, but they were too broad."
+  obscure_one: "I also considered {list}, but it would have been too hard to guess."
+  obscure_many: "I also considered {list}, but they would have been too hard to guess."
+  unsuitable_one: "One more idea wasn't family-friendly."
+  unsuitable_many: "{count} more ideas weren't family-friendly."
+  picked: "Then I found the one we're playing with now."
+  photo: "I found an Unsplash photo for it."
+  no_photo: "I couldn't find a fitting Unsplash photo this time."
+  work: "It took {wikipedia} Wikipedia lookups, {fast} Haiku-class and {smart} Sonnet-class AI calls, and {seconds} seconds."
+
 # The opening: the rules, then a card with the starting hint (a short poem) and an optional photo,
 # then the photo credit. The topic only appears in the thread name.
 rules: |
-  I'm a person, a thing, an event or an idea. Guess who I am!
+  I'm a person, thing, event or an idea. Guess who I am!
 
-  Ask me yes-or-no questions, take a guess, or ask for a hint if you're stuck. You only have {questions} questions, but hints are free.
-
-  I'll react with {yes} for yes, {no} for no or {sort_of} for sort of, and add {close} when you're close.
+  Ask me questions and I'll answer **yes** {yes}, **no** {no}, or **sort of** {sort_of}. If you are close, I'll also let you know {close}. When you're ready, make a guess, or ask for a hint if you're stuck. You only have {questions} questions, but hints are free.
 
   The game ends <t:{ends}:R> or whenever you say "stop the game".
 
   Ready to go?
-hint_title: "Starting Hint"
+hint_title: "Here's a Haiku to get you on your way..."
 riddle_line: "{line}"
-photo_credit: "-# Photo by [{name}]({profile}) on [Unsplash]({home})"
+photo_credit: "Photo by [{name}]({profile}) on [Unsplash]({home})."
+# Small line under the starting hint with the photo and GIF credits.
+credits: "-# {credits}"
 warning: "⏳ This round ends <t:{ends}:R>."
 
 # Answers to questions and guesses are reactions on the player's message.
@@ -69,15 +86,18 @@ stat_related: "🔗 Weirdly related guess: **{username}**: {text}"
 prompts:
   screen: |
     You screen topics for a family-friendly Discord party game where players guess a Wikipedia article with yes/no
-    questions. Judge the article above on two things.
+    questions. Judge the article above on three things.
     - suitable: is it a suitable topic for players aged 13 and up, families and a party game? Unsuitable: sexual
       content, graphic violence or gore, recent tragedies, crimes or criminals as the main subject, hate, drugs,
       self-harm, or private individuals. History as it is taught in schools is fine even when it is dark (wars,
-      empires, disasters, historical figures).
-    - guessable: could an average English-speaking person with a K-12 education and general world knowledge guess it
-      within about 10 yes/no answers? Guessable: South Dakota, 1776, Alexander Hamilton, Dentist, Ocean liner, Venice,
-      Electric vehicle, Tesla Model X, Mars exploration. Not guessable: 2005 Sugar Bowl, a minor village, a
-      little-known athlete, a single episode, match or bill.
+      empires, disasters, historical figures), and so is anything that would be in a school curriculum.
+    - guessable: could a group of English-speaking friends who'd do well at a pub quiz work it out within 20 yes/no
+      questions, with some effort? Guessable: Battle of Hastings, Fridtjof Nansen, Kwame Nkrumah, Suez Crisis,
+      Penicillin, Maurice Richard, Alexander Hamilton, Tesla Model X, Venice. Not guessable: 2005 Sugar Bowl, a minor
+      village, a little-known athlete, a single episode, match or bill.
+    - specific: is it a specific person, place, event, work, invention, organisation, species or similar, rather
+      than a basic everyday concept or a single common word? Not specific: Number, Ship, Time, Insect, Guitar,
+      Citrus, Water, Dog. Specific: Fridtjof Nansen, Tokyo, Titanic, Penicillin, Suez Crisis, Tesla Model X.
   opening: |
     Write the opening of a game of 20 Questions about the article above.
     - poem: a haiku (three lines of 5, 7 and 5 syllables, separated by newlines) spoken by the subject in the
@@ -86,22 +106,25 @@ prompts:
       Example for electromagnetism: "I pull and I push,\nbut only when charged with spark,\ninvisible hands.\nWho am I?"
     - topic: the broad theme it belongs to, 1 to 4 words, that doesn't give the answer away.
       Examples: "World War 2" for the T-34 tank, "Physics" for electromagnetism, "Amphibians" for Frog.
-    - image_query: 2 to 4 words to search a stock photo site for an atmospheric photo of the broad topic. It must not
-      find the answer or the kind of thing the answer is: for the T-34 tank, search "world war 2 soldiers", not
-      "military vehicle"; for Frog, "pond at dawn", not "frog".
+    - image_queries: three broad, general stock photo searches of one or two everyday words each, for a mood
+      picture of the topic, ordered from most fitting to most general. They must be words that find thousands of
+      photos, and must not find the answer or the kind of thing the answer is.
+      Examples: for the T-34 tank ["soldiers", "history", "snow"]; for Frog ["pond", "nature", "green"];
+      for Dentist ["hospital", "smile", "health"]; for Venice ["travel", "water", "architecture"].
   photo: |
     We need a photo for the topic "{topic}" at the start of a family-friendly game of 20 Questions. The secret answer
     is the article above, and the players must not be able to work it out from the photo.
-    Choose the best photo that: suits players aged 13 and up and families; clearly fits the topic; and does not show
-    or name the secret answer or the kind of thing it is (no tank in the photo if the answer is a tank).
-    Reply with its number, or 0 if none of them qualifies.
+    Choose the best photo that: suits players aged 13 and up and families; fits the topic (loosely is fine, it's just
+    a mood picture); and does not show or name the secret answer or the kind of thing it is (no tank in the photo if
+    the answer is a tank). Reply with its number, or 0 only if none of them qualifies.
   interpret: |
     You are the game master of a co-op game of 20 Questions. The secret answer is the article above.
     Players can't see the article. Classify the newest player message and answer it.
 
     intent:
     - "question": a yes/no question about the secret ("Is it alive?", "Was it built in Europe?").
-    - "guess": names a specific candidate for the secret ("Is it a frog?", "Titanic!", "the Eiffel Tower").
+    - "guess": names a specific candidate for the secret, even when phrased as a question ("Is it a frog?",
+      "Is it comics?", "Titanic!", "the Eiffel Tower").
     - "hint": plainly asks for a hint or clue.
     - "stop": plainly asks to stop, end or quit the game.
     - "chat": anything else (players talking to each other, reactions, jokes). These get no reply.
@@ -109,19 +132,26 @@ prompts:
     answer:
     - For a question: "yes", "no", "sort_of" (partly true, depends, or true in a loose sense) or
       "not_quite" (close to the truth but not exactly right). Answer truthfully from the article and common knowledge.
-    - For a guess: "yes" if it is the secret, including misspellings, alternative names and translations
-      ("Frogge" or "Frogg" for Frog). "not_quite" if it is closely related but not the same thing: a specific instance,
-      a sibling, a narrower category, or something that has the secret in its name
-      ("Pepe the Frog" for Frog, "Queen Mary 2" for Titanic). Otherwise "no".
+    - For a guess: "yes" if it means the same thing as the secret. Be generous about wording. All of these count:
+      singular or plural ("comic" for Comics, "frogs" for Frog); alternative, official or historical names
+      ("Holland" for the Netherlands); abbreviations and acronyms ("USA", "WW2"); close synonyms ("cellphone" for
+      Mobile phone, "automobile" for Car); misspellings and typos ("Frogge"); translations; a famous person's
+      surname alone ("Hamilton" for Alexander Hamilton); the name without a qualifier or prefix ("Titanic" for
+      RMS Titanic); a different word order or form ("the war of 1812" for War of 1812).
+      "not_quite" if it is closely related but not the same thing: a specific instance, a sibling, a narrower
+      category, or something that has the secret in its name ("Pepe the Frog" for Frog, "Queen Mary 2" for Titanic).
+      Otherwise "no".
     - For a question or guess that names a broader kind of thing the secret is ("Are you a tank?" when the secret is
       the Tiger I tank, "an animal" for Frog): "yes_more_specific".
     - For hint, stop and chat: "none".
-    guess: for a guess, the candidate named, else "".
+    guess: for a guess, the candidate exactly as the player wrote it (keep their spelling, don't correct it), else "".
   verify: |
     A player in a game of 20 Questions guessed: "{guess}". The secret answer is the article above.
-    Is the guess the same thing as the article's subject? Accept misspellings, alternative names, translations and
-    common short forms. Answer "yes_more_specific" if the guess is a broader kind of thing the subject is,
-    "not_quite" if it is closely related but a different thing, otherwise "no".
+    Does the guess mean the same thing as the article's subject? Answer "yes" generously for: singular or plural,
+    alternative, official or historical names, abbreviations and acronyms, close synonyms, misspellings and typos,
+    translations, a famous person's surname alone, the name without a qualifier or prefix, and a different word order
+    or form. Answer "yes_more_specific" if the guess is a broader kind of thing the subject is, "not_quite" if it is
+    closely related but a different thing, otherwise "no".
   hint: |
     You are the game master of a co-op game of 20 Questions. The secret answer is the article above.
     Below is everything the players have asked and guessed so far, and the hints already given.
@@ -134,12 +164,12 @@ prompts:
     A game of 20 Questions about the article above has ended ({outcome}). The game log is below.
     1. infocard: a museum-style info card about the subject in Discord markdown: one plain sentence saying what it is,
        then 3 or 4 short facts, each on its own line starting with a bold category label. Use different categories
-       that fit the subject, for example **Why it matters:**, **Fun fact:**, **History:**, **Science:**,
-       **Culture:**, **By the numbers:** or **Did you know?** Keep each fact to one or two sentences.
+       that fit the subject, for example ## Why it matters, ## Fun fact, ## History, ## Science,
+       ## Culture, ## By the numbers or ## Did you know? Keep each fact to one or two sentences.
        Don't repeat the title as a heading.
     2. Pick from the log (use "" for username and text when there's no good candidate):
        - most_valuable_question: the question that did most to narrow it down.
        - closest_guess: the wrong guess that came closest.
        - farthest_guess: the guess that was furthest off.
-       - related_guess: a wrong guess that is weirdly related to the answer, such as an actor from the film
+       - related_guess: a wrong guess that is unusually related to the answer, such as an actor from the film
          when the answer is the film. Only pick one if it is genuinely related.

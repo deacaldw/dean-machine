@@ -9,6 +9,11 @@ const ai = require(path.join(dir, 'ai.js'));
 const wiki = require(path.join(dir, 'wiki.js'));
 const unsplash = require(path.join(dir, 'unsplash.js'));
 const gifs = require(path.join(dir, 'gifs.js'));
+const stats = require(path.join(dir, 'stats.js'));
+// The skill's own strings, so rewording strings.yaml doesn't break the tests.
+const t = require(path.join(__dirname, '..', 'src', 'strings.js'))(dir);
+const UNSPLASH_HOME = 'https://unsplash.com/?utm_source=deanmachine&utm_medium=referral';
+const photoCredit = n => t('photo_credit', { name: `Photographer ${n}`, profile: `https://unsplash.com/@p${n}?ref`, home: UNSPLASH_HOME });
 
 const PHOTOS = [1, 2, 3].map(n => ({ url: `https://images/${n}.jpg`, preview: `https://images/${n}-small.jpg`, photographer: `Photographer ${n}`, profile: `https://unsplash.com/@p${n}?ref`, downloadLocation: `https://api/download/${n}` }));
 
@@ -30,8 +35,8 @@ function fakeAi(queue) {
   ai.verify = async () => { calls.verify++; return replies.shift(); };
   ai.hint = async () => { calls.hint++; return 'I jump quite high for my body size.'; };
   ai.wrapUp = async () => WRAP;
-  ai.opening = async () => ({ poem: 'Small and green I sit,\nsinging on a lily pad.\n\nWho am I?', topic: 'Amphibians', image_query: 'pond wildlife' });
-  ai.screen = async () => ({ suitable: true, guessable: true });
+  ai.opening = async () => ({ poem: 'Small and green I sit,\nsinging on a lily pad.\n\nWho am I?', topic: 'Amphibians', image_queries: ['pond', 'nature', 'green'] });
+  ai.screen = async () => ({ suitable: true, guessable: true, specific: true });
   ai.pickPhoto = async () => 2;
   calls.reported = [];
   calls.searched = [];
@@ -39,6 +44,7 @@ function fakeAi(queue) {
   unsplash.reportUse = photo => calls.reported.push(photo.url);
   calls.gifs = [];
   gifs.random = async query => { calls.gifs.push(query); return `https://gif/${query.replace(' ', '-')}.gif`; };
+  gifs.enabled = () => true;
 }
 
 // Runs /20questions against a fake channel and returns the job and the thread.
@@ -49,6 +55,8 @@ async function startGame(articles = [FROG]) {
   const jobs = [];
   const i = command('20questions');
   i.channel = { isThread: () => false };
+  i.followUps = [];
+  i.followUp = async x => { i.followUps.push(x); };
   i.edits = [];
   i.editReply = async content => { i.edits.push(content); i.edited = content; return { startThread: async options => { th.name = options.name; return th; } }; };
   await skill.handle(i, ctx(jobs));
@@ -70,17 +78,67 @@ function game(extra) {
 
 function say(g, content, username = 'Dean') {
   const replies = [];
-  const message = { channelId: 't1', content, author: { username, bot: false }, member: { displayName: username }, channel: g.th, reply: async x => replies.push(x.content), react: async emoji => replies.push('react:' + emoji) };
+  const message = { channelId: 't1', content, author: { username, bot: false }, member: { displayName: username }, channel: g.th, reply: async x => replies.push(x.content), react: async emoji => replies.push('react:' + Object.keys(t.get('reactions')).find(k => t(`reactions.${k}`) === emoji)) };
   return skill.message(message, g.ctx).then(() => replies);
 }
 
 const text = th => th.sent.map(m => (typeof m === 'string' ? m : m.content)).join('\n');
+
+test('the 1,000-article list is drawn 1 in 6 times, half as often as with equal odds', () => {
+  const total = Object.values(wiki.WEIGHTS).reduce((a, b) => a + b, 0);
+  assert.equal(wiki.WEIGHTS.vital / total, 1 / 6);
+  const real = Math.random;
+  try {
+    const at = roll => { Math.random = () => roll; return wiki.randomSource(); };
+    assert.deepEqual([0, 0.4, 0.42, 0.8, 0.84, 0.99].map(at), ['featured', 'featured', 'didYouKnow', 'didYouKnow', 'vital', 'vital']);
+  } finally {
+    Math.random = real;
+  }
+});
+
+test('the setup report tells the story without the answer', () => {
+  const report = skill.setupReport({
+    rejected: [{ title: 'Medicine', reason: 'broad' }, { title: 'Pendock Church', reason: 'obscure' }, { title: 'Spicy topic', reason: 'unsuitable' }],
+    photo: PHOTOS[0],
+    counts: { wikipedia: 12, fast: 6, smart: 2 },
+    seconds: 20,
+  });
+  assert.equal(report, `${t('report.title')}\n${[
+    t('report.broad_one', { list: '*Medicine*' }),
+    t('report.obscure_one', { list: '*Pendock Church*' }),
+    t('report.unsuitable_one'),
+    t('report.picked'),
+    t('report.photo'),
+    t('report.work', { wikipedia: 12, fast: 6, smart: 2, seconds: 20 }),
+  ].join(' ')}`);
+  assert.doesNotMatch(report, /Spicy/);
+
+  const firstTry = skill.setupReport({ rejected: [], photo: null, counts: {}, seconds: 4 });
+  assert.equal(firstTry, `${t('report.title')}\n${[t('report.first_try'), t('report.no_photo'), t('report.work', { wikipedia: 0, fast: 0, smart: 0, seconds: 4 })].join(' ')}`);
+
+  const many = skill.setupReport({ rejected: ['A', 'B', 'C'].map(title => ({ title, reason: 'broad' })), photo: null, counts: {}, seconds: 1 });
+  assert.ok(many.includes(t('report.broad_many', { list: '*A*, *B* and *C*' })));
+});
+
+test('stats counts work per game, even when games overlap', async () => {
+  const a = {};
+  const b = {};
+  const work = async (n, key) => { for (let i = 0; i < n; i++) { await new Promise(r => setImmediate(r)); stats.count(key); } };
+  await Promise.all([stats.track(a, () => work(3, 'fast')), stats.track(b, () => work(2, 'fast'))]);
+  stats.count('fast'); // outside any game: not counted anywhere
+  assert.deepEqual([a, b], [{ fast: 3 }, { fast: 2 }]);
+});
 
 test('sanitize turns typographic characters into plain ones and drops invisible ones', () => {
   assert.equal(ai.sanitize('“It’s” a test…​ ok'), '"It\'s" a test... ok');
   assert.equal(ai.sanitize('1914–1918 — the Great War'), '1914-1918 - the Great War');
   assert.equal(ai.sanitize('line one\nline two\u0007'), 'line one\nline two');
   assert.equal(ai.sanitize('Hồ Chí Minh 🐸'), 'Hồ Chí Minh 🐸');
+});
+
+test('sanitizeAll cleans nested results and keeps lists as lists', () => {
+  assert.deepEqual(ai.sanitizeAll({ poem: 'It’s me…', image_queries: ['pond', '“nature”'], n: 2, ok: true }),
+    { poem: "It's me...", image_queries: ['pond', '"nature"'], n: 2, ok: true });
 });
 
 test('matches accepts names, redirects and small typos, but not related things', () => {
@@ -92,43 +150,72 @@ test('matches accepts names, redirects and small typos, but not related things',
   assert.ok(!skill.matches('Toad', FROG));
 });
 
-test('/20questions skips unsuitable or unguessable articles and opens a topic thread with rules, hint card and photo credit', async () => {
-  fakeAi([]);
-  ai.screen = async a => ({ suitable: a.title !== 'Bad', guessable: a.title !== 'Obscure' });
-  const { i, th, jobs, card } = await startGame([{ ...FROG, title: 'Bad' }, { ...FROG, title: 'Obscure' }, FROG]);
+test('matches accepts plurals, punctuation differences and typos in long names', () => {
+  const title = name => ({ title: name, aliases: [] });
+  assert.ok(skill.matches('comic', title('Comics')));
+  assert.ok(skill.matches('a comic', title('Comics')));
+  assert.ok(skill.matches('frogs', FROG));
+  assert.ok(skill.matches('city', title('Cities')));
+  assert.ok(skill.matches('box', title('Boxes')));
+  assert.ok(skill.matches('glass', title('Glass')), "words ending in 'ss' aren't treated as plurals");
+  assert.ok(skill.matches('Lewis & Clark Expedition', title('Lewis and Clark Expedition')));
+  assert.ok(skill.matches('Mississipi River', title('Mississippi River')), 'a missing letter');
+  assert.ok(skill.matches('Shakespaere', title('Shakespeare')), 'swapped letters count as one typo');
+});
 
-  assert.equal(i.replied, '🤔 Thinking of something…');
-  assert.deepEqual(i.edits[0], { embeds: [{ color: 0x3366cc, image: { url: 'https://gif/thinking.gif' }, footer: { text: 'Powered by GIPHY' } }] });
+test('matches never lets a different real word win', () => {
+  const title = name => ({ title: name, aliases: [] });
+  assert.ok(!skill.matches('Iraq', title('Iran')));
+  assert.ok(!skill.matches('Austria', title('Australia')));
+  assert.ok(!skill.matches('Mars', title('Mass')));
+  assert.ok(!skill.matches('cat', title('Car')));
+  assert.ok(!skill.matches('Frgo', FROG), 'short typos are left to the AI');
+});
+
+test('/20questions skips unsuitable, unguessable or generic articles and opens a topic thread with rules, hint card and photo credit', async () => {
+  fakeAi([]);
+  ai.screen = async a => ({ suitable: a.title !== 'Bad', guessable: a.title !== 'Obscure', specific: a.title !== 'Generic' });
+  const { i, th, jobs, card } = await startGame([{ ...FROG, title: 'Bad' }, { ...FROG, title: 'Obscure' }, { ...FROG, title: 'Generic' }, FROG]);
+
+  assert.equal(i.replied, t('picking'));
   assert.deepEqual(calls.gifs, ['thinking']);
-  assert.match(i.edited.content, /\*\*Dean\*\* started a game/);
-  assert.deepEqual(i.edited.embeds, [], 'the GIF is removed');
-  assert.equal(th.name, '20 Questions: Amphibians');
+  assert.match(i.edits[0], /\[\.\]\(https:\/\/gif\/thinking\.gif\)/, 'the GIF link is masked');
+  assert.deepEqual(i.edits, [t('picking_with_gif', { picking: t('picking'), url: 'https://gif/thinking.gif' }), t('started', { username: 'Dean' })],
+    'the GIF joins the message, then the "started" edit replaces it');
+  assert.equal(th.name, t('thread_name', { topic: 'Amphibians' }));
   assert.equal(th.sent.length, 2);
 
   const ends = Math.floor(jobs[0].data.endsAt / 1000);
-  assert.equal(th.sent[0].content, [
-    "I'm a person, a thing, an event or an idea. Guess who I am!",
-    '',
-    "Ask me yes-or-no questions, take a guess, or ask for a hint if you're stuck. You only have 20 questions, but hints are free.",
-    '',
-    "I'll react with ✔️ for yes, ❌ for no or 🌀 for sort of, and add 🔥 when you're close.",
-    '',
-    `The game ends <t:${ends}:R> or whenever you say "stop the game".`,
-    '',
-    'Ready to go?',
-    '',
-  ].join('\n'));
-  assert.equal(card.title, 'Starting Hint');
-  assert.equal(card.description, 'Small and green I sit,\nsinging on a lily pad.\nWho am I?');
+  assert.equal(th.sent[0].content, t('rules', { questions: 20, ends, ...t.get('reactions') }));
+  assert.match(th.sent[0].content, new RegExp(`<t:${ends}:R>`), 'the countdown is in the rules');
+  assert.equal(card.title, t('hint_title'));
+  assert.equal(card.description, ['Small and green I sit,', 'singing on a lily pad.', 'Who am I?'].map(line => t('riddle_line', { line })).join('\n'));
   assert.deepEqual(card.image, { url: 'https://images/2.jpg' });
-  assert.equal(th.sent[1].content, '-# Photo by [Photographer 2](https://unsplash.com/@p2?ref) on [Unsplash](https://unsplash.com/?utm_source=deanmachine&utm_medium=referral)');
+  assert.equal(th.sent[1].content, t('credits', { credits: `${photoCredit(2)} ${t('gif_credit')}` }));
   assert.ok(th.sent[1].flags, 'link previews suppressed');
   assert.doesNotMatch(JSON.stringify(th.sent), /Amphibians|Wikipedia/);
-  assert.deepEqual(calls.searched, ['pond wildlife']);
+  assert.deepEqual(calls.searched, ['pond']);
   assert.deepEqual(calls.reported, ['https://images/2.jpg']);
   assert.equal(jobs[0].data.topic, 'Amphibians');
+
+  // Only the player who started gets the setup report, and it never names the answer.
+  const [report] = i.followUps;
+  assert.ok(report.flags, 'the report is only visible to the starter');
+  assert.ok(report.content.startsWith(t('report.title')));
+  assert.match(report.content, /\*Generic\*/, 'too-broad topics are named');
+  assert.match(report.content, /\*Obscure\*/, 'too-obscure topics are named');
+  assert.doesNotMatch(report.content, /Bad|Frog|Amphibians/, 'neither unsuitable topics nor the answer are named');
   assert.equal(jobs[0].data.threadId, 't9');
   assert.ok(Math.abs(jobs[0].data.endsAt - Date.now() - 1200000) < 2000);
+});
+
+test('if no photo from a search passes, it tries the next broad search', async () => {
+  fakeAi([]);
+  const picks = [0, 1];
+  ai.pickPhoto = async () => picks.shift();
+  const { card } = await startGame();
+  assert.deepEqual(calls.searched, ['pond', 'nature']);
+  assert.deepEqual(card.image, { url: 'https://images/1.jpg' });
 });
 
 test('the opening card goes without a photo if none passes the check or Unsplash fails', async () => {
@@ -136,7 +223,7 @@ test('the opening card goes without a photo if none passes the check or Unsplash
   ai.pickPhoto = async () => 0;
   let { card, th } = await startGame();
   assert.equal(card.image, undefined);
-  assert.equal(th.sent.length, 1, 'no credit line without a photo');
+  assert.equal(th.sent[1].content, t('credits', { credits: t('gif_credit') }), 'only the GIPHY credit');
   assert.deepEqual(calls.reported, []);
 
   fakeAi([]);
@@ -144,9 +231,9 @@ test('the opening card goes without a photo if none passes the check or Unsplash
   const error = console.error;
   console.error = () => {};
   ({ card, th } = await startGame().finally(() => { console.error = error; }));
-  assert.equal(card.title, 'Starting Hint');
+  assert.equal(card.title, t('hint_title'));
   assert.equal(card.image, undefined);
-  assert.equal(th.sent.length, 1);
+  assert.equal(th.sent.length, 2);
 });
 
 test('/20questions refuses in threads, when a game runs, and reports failures', async () => {
@@ -154,13 +241,13 @@ test('/20questions refuses in threads, when a game runs, and reports failures', 
   let i = command('20questions');
   i.channel = { isThread: () => true };
   await skill.handle(i, ctx([]));
-  assert.match(i.replied.content, /not in a thread/);
+  assert.equal(i.replied.content, t('not_here'));
 
   const g = game();
   i = command('20questions');
   i.channel = { isThread: () => false };
   await skill.handle(i, g.ctx);
-  assert.match(i.replied.content, /already running on this server: https:\/\/discord\.com\/channels\/g1\/t1/);
+  assert.equal(i.replied.content, t('already_running', { link: 'https://discord.com/channels/g1/t1' }));
 
   const jobs = [];
   wiki.pick = async () => { throw new Error('offline'); };
@@ -170,7 +257,7 @@ test('/20questions refuses in threads, when a game runs, and reports failures', 
   const error = console.error;
   console.error = () => {};
   await skill.handle(i, ctx(jobs)).finally(() => { console.error = error; });
-  assert.match(i.edited.content, /couldn't start/);
+  assert.equal(i.edited, t('start_failed'), 'the failure message replaces the GIF too');
   assert.equal(jobs.length, 0);
 });
 
@@ -180,7 +267,7 @@ test('only one game per server', async () => {
   const i = command('20questions');
   i.channel = { isThread: () => false };
   await skill.handle(i, g.ctx);
-  assert.match(i.replied.content, /already running on this server/);
+  assert.equal(i.replied.content, t('already_running', { link: 'https://discord.com/channels/g1/t1' }));
 });
 
 test('naming a broader kind of thing gets yes plus the close reaction, and the game goes on', async () => {
@@ -189,8 +276,8 @@ test('naming a broader kind of thing gets yes plus the close reaction, and the g
     { intent: 'question', answer: 'yes_more_specific', guess: '' },
     { intent: 'guess', answer: 'yes_more_specific', guess: 'an amphibian' },
   ]);
-  assert.deepEqual(await say(g, 'Are you an animal?'), ['react:✔️', 'react:🔥']);
-  assert.deepEqual(await say(g, 'An amphibian!'), ['react:✔️', 'react:🔥']);
+  assert.deepEqual(await say(g, 'Are you an animal?'), ['react:yes', 'react:close']);
+  assert.deepEqual(await say(g, 'An amphibian!'), ['react:yes', 'react:close']);
   assert.equal(calls.verify, 0);
   assert.equal(g.jobs.length, 1);
 });
@@ -203,9 +290,9 @@ test('close answers get a "so close" GIF at most once every 3 minutes', async ()
     { intent: 'guess', answer: 'not_quite', guess: 'Newt' },
     { intent: 'question', answer: 'no', guess: '' },
   ]);
-  const gifPosts = () => g.th.sent.filter(m => m.embeds?.[0]?.image?.url === 'https://gif/so-close.gif').length;
+  const gifPosts = () => g.th.sent.filter(m => m === 'https://gif/so-close.gif').length; // just the GIF link, no card
 
-  assert.deepEqual(await say(g, 'Toad?'), ['react:❌', 'react:🔥']);
+  assert.deepEqual(await say(g, 'Toad?'), ['react:no', 'react:close']);
   assert.equal(gifPosts(), 1);
   await say(g, 'Are you an amphibian?');
   assert.equal(gifPosts(), 1, 'not again within 3 minutes');
@@ -221,13 +308,15 @@ test('no GIFs without a GIPHY key, and the game carries on', async () => {
   const g = game();
   fakeAi([{ intent: 'guess', answer: 'not_quite', guess: 'Toad' }]);
   gifs.random = async () => null;
-  assert.deepEqual(await say(g, 'Toad?'), ['react:❌', 'react:🔥']);
+  assert.deepEqual(await say(g, 'Toad?'), ['react:no', 'react:close']);
   assert.equal(g.th.sent.length, 0);
 
   fakeAi([]);
   gifs.random = async () => null;
-  const { i } = await startGame();
-  assert.equal(i.edits.length, 1, 'only the "started" edit');
+  gifs.enabled = () => false;
+  const { i, th } = await startGame();
+  assert.deepEqual(i.edits, [t('started', { username: 'Dean' })], 'no GIF edit');
+  assert.equal(th.sent[1].content, t('credits', { credits: photoCredit(2) }), 'no GIPHY credit');
 });
 
 test('questions are answered and counted; chat is ignored; hints are free', async () => {
@@ -238,9 +327,9 @@ test('questions are answered and counted; chat is ignored; hints are free', asyn
     { intent: 'question', answer: 'sort_of', guess: '' },
     { intent: 'hint', answer: 'none', guess: '' },
   ]);
-  assert.deepEqual(await say(g, 'Is it an animal?'), ['react:✔️']);
+  assert.deepEqual(await say(g, 'Is it an animal?'), ['react:yes']);
   assert.deepEqual(await say(g, 'lol good one', 'Ana'), []);
-  assert.deepEqual(await say(g, 'Does it live in water?'), ['react:🌀']);
+  assert.deepEqual(await say(g, 'Does it live in water?'), ['react:sort_of']);
   assert.equal(g.th.typing, 0, 'no typing indicator for reactions');
   assert.deepEqual(await say(g, 'can we get a hint?'), ['I jump quite high for my body size.']);
   assert.equal(g.th.typing, 1, 'typing while the hint is written');
@@ -252,31 +341,33 @@ test('questions are answered and counted; chat is ignored; hints are free', asyn
 test('a near-exact guess wins without a second opinion and ends with card and stats', async () => {
   const g = game();
   fakeAi([{ intent: 'guess', answer: 'no', guess: 'the frog' }]);
-  assert.deepEqual(await say(g, 'Is it the frog?'), ['react:✔️']);
+  assert.deepEqual(await say(g, 'Is it the frog?'), ['react:yes']);
   assert.equal(calls.verify, 0);
   assert.equal(g.jobs.length, 0);
   assert.equal(g.th.typing, 1, 'typing only while the result card is written');
   const out = text(g.th);
-  assert.match(out, /\*\*Dean\*\* got it! You found the answer with 1 of 20 questions/);
-  assert.match(out, /got it![^]*Pulling up the info card…[^]*^# Frog$/m);
-  assert.match(out, /Most questions asked: \*\*Dean\*\* \(1\)/);
-  assert.match(out, /Most valuable question: \*\*Dean\*\*: Is it an animal\?/);
-  assert.match(out, /Closest guess: \*\*Ana\*\*: Toad/);
-  assert.doesNotMatch(out, /Farthest guess/);
+  const order = [t('win', { username: 'Dean', used: 1, max: 20 }), t('card_loading'), t('reveal', { title: 'Frog' })].map(x => out.indexOf(x));
+  assert.ok(order.every((at, k) => at >= 0 && (k === 0 || at > order[k - 1])), 'result, loading line, then the answer');
+  assert.equal(g.th.sent.at(-1), [
+    t('stats_title'),
+    t('stat_most_questions', { username: 'Dean', count: 1 }),
+    t('stat_valuable', { username: 'Dean', text: 'Is it an animal?' }),
+    t('stat_closest', { username: 'Ana', text: 'Toad' }),
+  ].join('\n'), 'stats without a candidate are left out');
   const card = g.th.sent.find(m => m.embeds);
-  assert.match(card.embeds[0].description, /^Frogs are amphibians\.\n\n\[Read more\]\(https:\/\/en\.wikipedia\.org\/wiki\/Frog\)$/);
+  assert.equal(card.embeds[0].description, `Frogs are amphibians.\n\n[${t('read_more')}](https://en.wikipedia.org/wiki/Frog)`);
   assert.deepEqual(card.embeds[0].image, { url: 'https://img/frog.jpg' });
 });
 
 test('an AI "yes" for a misspelling is confirmed by a second opinion, which can overrule it', async () => {
   let g = game();
   fakeAi([{ intent: 'guess', answer: 'yes', guess: 'Frogge' }, 'yes']);
-  assert.deepEqual(await say(g, 'Frogge!'), ['react:✔️']);
+  assert.deepEqual(await say(g, 'Frogge!'), ['react:yes']);
   assert.equal(calls.verify, 1);
 
   g = game();
   fakeAi([{ intent: 'guess', answer: 'yes', guess: 'Pepe the Frog' }, 'not_quite']);
-  assert.deepEqual(await say(g, 'Pepe the Frog?'), ['react:❌', 'react:🔥']);
+  assert.deepEqual(await say(g, 'Pepe the Frog?'), ['react:no', 'react:close']);
   assert.equal(g.jobs.length, 1);
 });
 
@@ -284,7 +375,7 @@ test('heads-ups at 10 and 5 questions left, once each', async () => {
   const g = game({ used: 9 });
   fakeAi(Array(6).fill({ intent: 'question', answer: 'no', guess: '' }));
   for (let i = 0; i < 6; i++) await say(g, 'Is it big?');
-  assert.deepEqual(g.th.sent, ['10 questions left.', '5 questions left.']);
+  assert.deepEqual(g.th.sent, [t('questions_left', { left: 10 }), t('questions_left', { left: 5 })]);
 });
 
 test('after 20 questions only one final guess is allowed', async () => {
@@ -294,11 +385,11 @@ test('after 20 questions only one final guess is allowed', async () => {
     { intent: 'question', answer: 'yes', guess: '' },
     { intent: 'guess', answer: 'no', guess: 'Newt' },
   ]);
-  assert.deepEqual(await say(g, 'Toad?'), ['react:❌']);
-  assert.match(text(g.th), /last question/);
-  assert.deepEqual(await say(g, 'Is it green?'), ['No more questions. Make your final guess!']);
-  assert.deepEqual(await say(g, 'Newt?'), ['react:❌']);
-  assert.match(text(g.th), /That was your final guess/);
+  assert.deepEqual(await say(g, 'Toad?'), ['react:no']);
+  assert.ok(text(g.th).includes(t('last_question')));
+  assert.deepEqual(await say(g, 'Is it green?'), [t('guess_now')]);
+  assert.deepEqual(await say(g, 'Newt?'), ['react:no']);
+  assert.ok(text(g.th).includes(t('lose')));
   assert.equal(g.jobs.length, 0);
 });
 
@@ -306,7 +397,7 @@ test('anyone can stop the game by asking', async () => {
   const g = game();
   fakeAi([{ intent: 'stop', answer: 'none', guess: '' }]);
   await say(g, 'ok stop the game', 'Ana');
-  assert.match(text(g.th), /Game stopped/);
+  assert.ok(text(g.th).includes(t('stopped')));
   assert.match(text(g.th), /^# Frog$/m);
   assert.equal(g.jobs.length, 0);
 });
@@ -316,14 +407,14 @@ test('/20questions-stop is for the starter or admins', async () => {
   fakeAi([]);
   let i = command('20questions-stop', {}, { userId: 'u2' });
   await skill.handle(i, g.ctx);
-  assert.match(i.replied.content, /Only the player who started/);
+  assert.equal(i.replied.content, t('stop_not_allowed'));
 
   i = command('20questions-stop');
   i.client = { channels: { fetch: async () => g.th } };
   i.deferReply = async () => {};
   i.editReply = async content => { i.edited = content; };
   await skill.handle(i, g.ctx);
-  assert.equal(i.edited, 'Game stopped.');
+  assert.equal(i.edited, t('stop_done'));
   assert.equal(g.jobs.length, 0);
 });
 
@@ -341,7 +432,8 @@ test('run posts the countdown at 10, 5, 2 and 1 minutes left, once each', async 
   await at(4.9);
   await at(0.9); // 2 minutes was skipped (e.g. bot offline): only one message for 2 and 1
   assert.equal(g.th.sent.length, 3);
-  assert.match(g.th.sent[0], /^⏳ This round ends <t:\d+:R>\.$/);
+  const [before, after] = t('warning', { ends: '§' }).split('§');
+  assert.ok(g.th.sent.every(m => m.startsWith(before) && m.endsWith(after)));
   assert.deepEqual(g.data.warned, [10, 5, 2, 1]);
 });
 
@@ -352,7 +444,7 @@ test('run ends the game on timeout, and silently when the thread is gone', async
 
   g = game({ threadId: 'late', endsAt: Date.now() - 1 });
   assert.equal(await skill.run(g.data, { channels: { fetch: async () => g.th } }), true);
-  assert.match(text(g.th), /Time's up/);
+  assert.ok(text(g.th).includes(t('timeout')));
 
   g = game({ threadId: 'gone' });
   const gone = { channels: { fetch: async () => { throw Object.assign(new Error('Unknown Channel'), { status: 404 }); } } };

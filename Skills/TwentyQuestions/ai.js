@@ -2,6 +2,7 @@
 // Reasoning is off on both to keep costs down.
 const Anthropic = require('@anthropic-ai/sdk').default;
 const t = require('../../src/strings')(__dirname);
+const { count } = require('./stats');
 
 const FAST = { model: 'claude-haiku-5-5', thinking: { type: 'disabled' } }; // screening topics, reading messages
 const SMART = { model: 'claude-sonnet-5-5', thinking: { type: 'between_tools' } }; // riddle, verifying wins, hints, wrap-up
@@ -20,8 +21,9 @@ function sanitize(text) {
     .trim();
 }
 const sanitizeAll = value => (typeof value === 'string' ? sanitize(value)
-  : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, sanitizeAll(v)]))
-    : value);
+  : Array.isArray(value) ? value.map(sanitizeAll)
+    : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, sanitizeAll(v)]))
+      : value);
 
 let client;
 const anthropic = () => (client ??= new Anthropic()); // reads ANTHROPIC_API_KEY
@@ -37,6 +39,7 @@ function articleBlock(article) {
 
 // One request. The article comes first so repeated calls about the same game hit the prompt cache.
 async function ask({ model, thinking }, article, instructions, user, { schema, effort = 'low', maxTokens = 2000 } = {}) {
+  count(model === FAST.model ? 'fast' : 'smart');
   const res = await anthropic().messages.create({
     model,
     thinking,
@@ -57,20 +60,21 @@ const logText = log => log.map((e, i) => `#${i + 1} ${e.username} (${e.intent}):
 
 module.exports = {
   sanitize,
+  sanitizeAll,
 
-  // Is the topic family-friendly, and guessable by an average player? -> { suitable, guessable }
+  // Is the topic family-friendly, guessable with some effort, and specific enough? -> { suitable, guessable, specific }
   async screen(article) {
     const opening = { ...article, text: article.text.slice(0, SCREEN_TEXT) };
     return ask(FAST, opening, t('prompts.screen'), 'Screen this topic.', {
-      schema: strictObject({ suitable: { type: 'boolean' }, guessable: { type: 'boolean' } }),
+      schema: strictObject({ suitable: { type: 'boolean' }, guessable: { type: 'boolean' }, specific: { type: 'boolean' } }),
     });
   },
 
   // The opening: a riddle poem, a broad topic that doesn't give the answer away, and a photo search.
-  // -> { poem, topic, image_query }
+  // -> { poem, topic, image_queries }
   async opening(article) {
     return ask(SMART, article, t('prompts.opening'), 'Write the opening.', {
-      schema: strictObject({ poem: { type: 'string' }, topic: { type: 'string' }, image_query: { type: 'string' } }),
+      schema: strictObject({ poem: { type: 'string' }, topic: { type: 'string' }, image_queries: { type: 'array', items: { type: 'string' } } }),
     });
   },
 

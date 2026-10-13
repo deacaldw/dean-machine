@@ -1,4 +1,5 @@
 // Picks a well-known English Wikipedia article from one of three curated sources.
+const { count } = require('./stats');
 const UA = 'DeanMachine/1.0 (Discord bot; https://github.com/deacaldw/dean-machine)';
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MAX_TEXT = 20000; // characters of article text kept for the AI
@@ -10,6 +11,7 @@ const lastYear = () => new Date().getUTCFullYear() - 1;
 
 async function api(host, params) {
   const url = `https://${host}/w/api.php?` + new URLSearchParams({ format: 'json', formatversion: 2, ...params });
+  count('wikipedia');
   const res = await fetch(url, { headers: { 'User-Agent': UA } });
   if (!res.ok) throw new Error(`${host} returned ${res.status}`);
   return res.json();
@@ -58,11 +60,23 @@ async function article(title) {
   };
 }
 
-// A random article from a random source; retries on dead ends.
+// How often each source is drawn. The 1,000-article list is mostly broad concepts (Ship, Number) that
+// make easy games, so it's drawn half as often as the others: 1 in 6.
+const WEIGHTS = { featured: 5, didYouKnow: 5, vital: 2 };
+
+function randomSource() {
+  let roll = Math.random() * Object.values(WEIGHTS).reduce((a, b) => a + b, 0);
+  for (const [name, weight] of Object.entries(WEIGHTS)) {
+    if ((roll -= weight) < 0) return name;
+  }
+  return 'featured';
+}
+
+// A random article from a weighted random source; retries on dead ends.
 async function pick(attempts = 5) {
   for (let i = 0; i < attempts; i++) {
     try {
-      const title = await random(Object.values(sources))();
+      const title = await sources[randomSource()]();
       const found = title && await article(title);
       if (found) return found;
     } catch {
@@ -72,4 +86,4 @@ async function pick(attempts = 5) {
   throw new Error('No usable Wikipedia article found');
 }
 
-module.exports = { pick, article, boldLinks };
+module.exports = { pick, article, boldLinks, randomSource, WEIGHTS };
