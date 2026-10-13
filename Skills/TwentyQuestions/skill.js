@@ -3,7 +3,7 @@ const { MessageFlags, PermissionFlagsBits, ButtonStyle } = require('discord.js')
 const t = require('../../src/strings')(__dirname);
 const wiki = require('./wiki');
 const ai = require('./ai');
-const stats = require('./stats');
+const youtube = require('./youtube');
 
 const MAX_QUESTIONS = 20; // the question after the 20th is the final guess
 const MINUTES = 20;
@@ -13,6 +13,7 @@ const QUESTION_REMINDERS = [15, 10, 5]; // questions left
 const TIME_REMINDERS = [15, 10, 5, 1]; // minutes left
 const CHECK_MS = 30 * 1000; // how often to check the thread still exists
 const COLOR = 0x3366cc;
+const RECENT = 6; // lines about what just happened, given to the router
 const PLAY_AGAIN = `${path.basename(__dirname)}:again`; // button customId; the core routes "<Skill>:..." here
 
 const lastCheck = {}; // threadId -> timestamp, in memory only
@@ -26,20 +27,15 @@ const nameOf = source => source.member?.displayName ?? (source.user ?? source.au
 // --- Setting up ---
 
 // Draws a batch of candidates from good_articles.json, has Sonnet judge them all in one call, and fetches a random
-// one that passed. Tries another batch if none did. Also returns how many were checked and why they failed.
+// one that passed. Tries another batch if none did.
 async function pickArticle() {
-  const checked = { total: 0, passed: 0, difficulty: 0, unsuitable: 0 };
   for (let round = 0; round < PICK_ROUNDS; round++) {
     const batch = wiki.candidates(BATCH_SIZE);
     const verdicts = await ai.screen(batch.map(c => c.name));
-    checked.total += batch.length;
-    checked.unsuitable += verdicts.filter(v => !v.suitable).length;
-    checked.difficulty += verdicts.filter(v => v.suitable && !v.guessable).length;
     const passed = batch.filter((_, i) => verdicts[i].suitable && verdicts[i].guessable).sort(() => Math.random() - 0.5);
-    checked.passed += passed.length;
     for (const candidate of passed) {
       const article = await wiki.article(candidate.title);
-      if (article) return { article, checked };
+      if (article) return article;
     }
   }
   throw new Error('No suitable article found');
@@ -54,13 +50,11 @@ async function writeOpening(article) {
   return leaksTitle(opening.hint, article.title) ? ai.opening(article) : opening;
 }
 
-// The rules as text, with the starting hint card: a famous quote (with its author), or a haiku.
-function openingMessage({ hint, kind, author, authorIsAnswer }, endsAt) {
-  const by = kind === 'quote' ? [t('quote_author', { author: authorIsAnswer || !author ? t('author_is_answer') : author })] : [];
-  return {
-    content: t('rules', { questions: MAX_QUESTIONS, ends: Math.floor(endsAt / 1000), ...t.get('reactions') }),
-    embeds: [{ color: COLOR, title: t(kind === 'quote' ? 'quote_title' : 'haiku_title'), description: [hint, ...by, t('who_am_i')].join('\n') }],
-  };
+// "Here's a quote/haiku to get you on your way..." and a box with it in italics (and the quote's author).
+function startingHint({ hint, kind, author, authorIsAnswer }) {
+  const lines = hint.split('\n').filter(line => line.trim()).map(line => t('hint_line', { line: line.trim() }));
+  if (kind === 'quote') lines.push(t('quote_author', { author: authorIsAnswer || !author ? t('author_is_answer') : author }));
+  return { intro: t(kind === 'quote' ? 'intro_quote' : 'intro_haiku'), embeds: [{ color: COLOR, description: lines.join('\n') }] };
 }
 
 const playAgainButton = () => ({
@@ -68,12 +62,8 @@ const playAgainButton = () => ({
   components: [{ type: 1, components: [{ type: 2, style: ButtonStyle.Primary, label: t('play_again'), custom_id: PLAY_AGAIN }] }],
 });
 
-// How the topic was picked, for the player who started the game. Only counts, so it never names the answer.
-function setupReport({ checked, counts, seconds }) {
-  return `${t('report.title')}\n${t('report.story', { ...checked, wikipedia: 0, fast: 0, accurate: 0, ...counts, seconds })}`;
-}
-
-// Starts a game from /20questions (in a new thread) or from the Play again button (in the same thread, renamed).
+// Starts a game from /20questions (in a new thread, with the rules) or from the Play again button (quietly, in the
+// same thread, renamed for the new topic).
 async function start(interaction, ctx) {
   const again = interaction.isButton?.() ?? false;
   if (!again && interaction.channel?.isThread()) return ephemeral(interaction, t('not_here'));
@@ -84,48 +74,47 @@ async function start(interaction, ctx) {
 
   starting.add(interaction.guildId);
   try {
-    const startedAt = Date.now();
-    await interaction.reply(t('picking'));
+    // Play again: confirm at once and remove the button (no second click) while the next topic is picked.
+    if (again) await interaction.update({ content: t('play_again_starting', { username: nameOf(interaction) }), components: [] });
+    else await interaction.reply(t('picking'));
 
-    const counts = {}; // Wikipedia lookups and AI calls made while setting up, for the report
-    let picked, opening;
+    let article, opening;
     try {
-      await stats.track(counts, async () => {
-        picked = await pickArticle();
-        [opening, picked.article.photos] = await Promise.all([writeOpening(picked.article), wiki.photos(picked.article).catch(() => [])]);
-      });
+      article = await pickArticle();
+      [opening, article.photos] = await Promise.all([writeOpening(article), wiki.photos(article).catch(() => [])]);
     } catch (err) {
       console.error(`TwentyQuestions: couldn't start: ${err.message}`);
       return interaction.editReply(t('start_failed'));
     }
 
     const name = cut(t('thread_name', { topic: opening.topic }), 100);
+    const endsAt = Date.now() + MINUTES * 60000;
+    const { intro, embeds } = startingHint(opening);
     let thread;
     if (again) {
       thread = interaction.channel;
       await thread.setName(name).catch(err => console.error(`TwentyQuestions: couldn't rename the thread: ${err.message}`));
-      await interaction.editReply(t('started_again', { username: nameOf(interaction) }));
+      await thread.send({ content: intro, embeds });
     } else {
       const message = await interaction.editReply(t('started', { username: nameOf(interaction) }));
       thread = await message.startThread({ name, autoArchiveDuration: 60 });
+      const rules = t('rules', { questions: MAX_QUESTIONS, ends: Math.floor(endsAt / 1000), intro, ...t.get('reactions') });
+      await thread.send({ content: rules, embeds });
     }
-    const endsAt = Date.now() + MINUTES * 60000;
-    await thread.send(openingMessage(opening, endsAt));
-    const seconds = Math.round((Date.now() - startedAt) / 1000);
-    await interaction.followUp({ content: setupReport({ ...picked, counts, seconds }), flags: MessageFlags.Ephemeral }).catch(() => {});
 
     ctx.add({
       guildId: interaction.guildId,
       channelId: again ? thread.parentId : interaction.channelId,
       threadId: thread.id,
       starterId: interaction.user.id,
-      article: picked.article, // cached: its opening is given to Sonnet when judging
-      answers: [...new Set([picked.article.title, ...opening.answers])], // guesses that should win (a guideline for Sonnet)
+      article, // cached: its opening is given to Sonnet when judging
+      answers: [...new Set([article.title, ...opening.answers])], // guesses that should win (a guideline for Sonnet)
       topic: opening.topic,
       endsAt,
       warned: [],
       used: 0,
       log: [], // { username, text, result }
+      recent: [], // lines about what just happened, for the router
       hints: [],
       over: false,
     });
@@ -136,6 +125,12 @@ async function start(interaction, ctx) {
 
 // --- Playing ---
 
+// Remembers what just happened (for the router), keeping only the last few lines.
+function remember(game, kind, message, extra = {}) {
+  const line = t(`prompts.recent.${kind}`, { username: nameOf(message), text: cut(message.content, 150), ...extra });
+  game.recent = [...(game.recent ?? []), line].slice(-RECENT);
+}
+
 // A question or guess, judged by Sonnet. Answered with a reaction.
 async function ask(game, message, ctx, jobId) {
   const question = cut(message.content, 300);
@@ -143,6 +138,7 @@ async function ask(game, message, ctx, jobId) {
   if (game.over) return;
   game.used++;
   game.log.push({ username: nameOf(message), text: question, result });
+  remember(game, 'ask', message, { result });
   await message.react(t(`reactions.${result}`));
 
   if (result === 'win' || game.used > MAX_QUESTIONS) {
@@ -160,6 +156,7 @@ async function hint(game, message) {
   const text = await ai.hint(game);
   if (game.over) return;
   game.hints.push(text);
+  remember(game, 'hint', message);
   await message.reply({ content: t('hint', { hint: text }), allowedMentions: { repliedUser: false } });
 }
 
@@ -167,14 +164,14 @@ async function hint(game, message) {
 
 // The final info card with the article's photos. Discord shows up to 4 images as a gallery when several cards
 // share a URL, so photos 1-4 form the gallery and a fifth goes in the corner thumbnail.
-function infoCard(article, text) {
+function infoCard(article, text, extra = '') {
   const photos = article.photos ?? (article.image ? [article.image] : []);
   const [first, ...more] = photos.slice(0, 4);
   return [
     {
       color: COLOR,
       url: article.url,
-      description: cut(`${text || cut(article.text, 600)}\n\n[${t('read_more')}](${article.url})`, 4096),
+      description: cut(`${text || cut(article.text, 600)}\n\n${extra ? `${extra}\n` : ''}[${t('read_more')}](${article.url})`, 4096),
       image: first ? { url: first } : undefined,
       thumbnail: photos[4] ? { url: photos[4] } : undefined,
     },
@@ -182,7 +179,15 @@ function infoCard(article, text) {
   ];
 }
 
-// Ends the game once: result line, then the answer with an info card, then stats.
+// A YouTube video picked by the wrap-up: { kind: 'trailer' | 'song' | 'documentary', title, url }, or null.
+async function findVideo(video) {
+  if (!video || video.kind === 'none') return null;
+  const found = await youtube.search(video.search); // never throws; null without a key or on any failure
+  return found ? { kind: video.kind, ...found } : null;
+}
+
+// Ends the game once: result line, then the answer with an info card (with a trailer or song link), then stats, a
+// documentary if there's one, and the button to play again.
 async function finish(game, thread, outcome, username) {
   if (game.over) return;
   game.over = true;
@@ -197,7 +202,9 @@ async function finish(game, thread, outcome, username) {
   } catch (err) {
     console.error(`TwentyQuestions: wrap-up failed: ${err.message}`);
   }
-  await send({ content: t('reveal', { title: ai.sanitize(game.article.title) }), embeds: infoCard(game.article, wrap?.infocard) });
+  const video = await findVideo(wrap?.video);
+  const link = video && video.kind !== 'documentary' ? t(`video.${video.kind}`, video) : '';
+  await send({ content: t('reveal', { title: ai.sanitize(game.article.title) }), embeds: infoCard(game.article, wrap?.infocard, link) });
 
   const asked = {};
   for (const e of game.log) asked[e.username] = (asked[e.username] ?? 0) + 1;
@@ -208,6 +215,7 @@ async function finish(game, thread, outcome, username) {
     if (pick?.username && pick?.text) lines.push(t(label, { username: pick.username, text: cut(pick.text, 200) }));
   }
   if (lines.length) await send([t('stats_title'), ...lines].join('\n'));
+  if (video?.kind === 'documentary') await send(t('video.documentary', video));
   await send(playAgainButton());
 }
 
@@ -241,8 +249,9 @@ module.exports = {
     const job = ctx.jobs.find(j => j.data.threadId === message.channelId);
     if (!job || job.data.over) return;
     const game = job.data;
-    const route = await ai.route(message.content);
+    const route = await ai.route(message.content, game.recent);
     if (game.over) return;
+    if (route === 'chat') return remember(game, 'chat', message);
     if (route === 'ask') return ask(game, message, ctx, job.id);
     if (route === 'hint') return hint(game, message);
     if (route === 'stop') {
@@ -280,5 +289,5 @@ module.exports = {
     return true;
   },
 
-  setupReport, leaksTitle, // exported for tests
+  leaksTitle, // exported for tests
 };

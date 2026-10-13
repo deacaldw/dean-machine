@@ -2,7 +2,7 @@
 // writing. Reasoning is off on both to keep costs down.
 const Anthropic = require('@anthropic-ai/sdk').default;
 const t = require('../../src/strings')(__dirname);
-const { count, log } = require('./stats');
+const { log } = require('./log');
 
 const FAST = { name: 'fast', model: 'claude-haiku-5-5', thinking: { type: 'disabled' } };
 const ACCURATE = { name: 'accurate', model: 'claude-sonnet-5-5', thinking: { type: 'between_tools' } };
@@ -44,7 +44,6 @@ const logText = entries => (entries.length ? entries.map((e, i) => `${i + 1}. ${
 // One request. The article (if any) comes first and is cached, since quote searches repeat it for every question.
 // `task` and `about` only describe the request in the log.
 async function call(model, task, about, { article, prompt, input, schema, maxTokens = 1500 }) {
-  count(model.name);
   const started = Date.now();
   const system = [];
   if (article) system.push({ type: 'text', text: article, cache_control: { type: 'ephemeral' } });
@@ -93,8 +92,9 @@ module.exports = {
   }),
 
   // -> 'ask' | 'hint' | 'stop' | 'chat'
-  route: async message => (await call(FAST, 'route', message, {
-    prompt: t('prompts.route'), input: message, maxTokens: 200,
+  // `recent` is a few lines about what just happened, so short follow-ups ("another one?") make sense.
+  route: async (message, recent = []) => (await call(FAST, 'route', message, {
+    prompt: t('prompts.route'), input: t('prompts.route_input', { recent: lines(recent), message }), maxTokens: 200,
     schema: object({ route: oneOf(['ask', 'hint', 'stop', 'chat']) }),
   })).route,
 
@@ -106,10 +106,13 @@ module.exports = {
 
   hint: game => call(ACCURATE, 'hint', game.article.title, { prompt: gameText(game), input: t('prompts.hint'), maxTokens: 300 }),
 
-  // -> { infocard, most_valuable_question, closest_guess, farthest_guess, related_guess }
+  // -> { infocard, most_valuable_question, closest_guess, farthest_guess, related_guess, video: { kind, search } }
   wrapUp: (game, outcome) => call(ACCURATE, 'wrap-up', `${game.article.title} (${outcome})`, {
     article: articleText(game.article, INTRO), prompt: t('prompts.wrap_up', { outcome }), input: `Game log:\n${logText(game.log)}`,
     maxTokens: 3000,
-    schema: object({ infocard: text, most_valuable_question: pick, closest_guess: pick, farthest_guess: pick, related_guess: pick }),
+    schema: object({
+      infocard: text, most_valuable_question: pick, closest_guess: pick, farthest_guess: pick, related_guess: pick,
+      video: object({ kind: oneOf(['trailer', 'song', 'documentary', 'none']), search: text }),
+    }),
   }),
 };

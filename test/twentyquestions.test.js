@@ -8,7 +8,9 @@ const skill = require(path.join(dir, 'skill.js'));
 const ai = require(path.join(dir, 'ai.js'));
 const wiki = require(path.join(dir, 'wiki.js'));
 const realCandidates = wiki.candidates; // the other tests replace it with a fake
-const stats = require(path.join(dir, 'stats.js'));
+const { log } = require(path.join(dir, 'log.js'));
+const youtube = require(path.join(dir, 'youtube.js'));
+const realYoutubeSearch = youtube.search; // the other tests replace it with a fake
 // The skill's own strings, so rewording strings.yaml doesn't break the tests.
 const t = require(path.join(__dirname, '..', 'src', 'strings.js'))(dir);
 
@@ -21,18 +23,20 @@ const WRAP = {
   closest_guess: { username: 'Ana', text: 'Toad' },
   farthest_guess: { username: '', text: '' },
   related_guess: { username: '', text: '' },
+  video: { kind: 'none', search: '' },
 };
 
 // Fake Claude and Wikipedia. route() and judge() answer from queues.
 let calls;
 function fakes({ routes = [], results = [] } = {}) {
-  calls = { judge: [], hint: 0, screened: [], fetched: [] };
+  calls = { judge: [], hint: 0, screened: [], fetched: [], routed: [] };
   ai.screen = async names => { calls.screened.push(names); return names.map(() => ({ suitable: true, guessable: true })); };
   ai.opening = async () => ({ topic: 'Amphibians', kind: 'haiku', hint: POEM, answers: ['frogs', 'Anura'] });
-  ai.route = async () => routes.shift();
+  ai.route = async (message, recent) => { calls.routed.push([...(recent ?? [])]); return routes.shift(); };
   ai.judge = async (game, question) => { calls.judge.push({ question, log: [...game.log], hints: [...game.hints] }); return results.shift(); };
   ai.hint = async () => { calls.hint++; return 'It lives near water.'; };
   ai.wrapUp = async () => WRAP;
+  youtube.search = async query => ({ title: `Video: ${query}`, url: `https://www.youtube.com/watch?v=${encodeURIComponent(query)}` });
   wiki.candidates = n => Array.from({ length: n }, (_, i) => ({ name: i ? `Topic ${i}` : 'Frog', title: i ? `Topic ${i}` : 'Frog' }));
   wiki.article = async title => { calls.fetched.push(title); return { ...FROG }; }; // copies, so cached photos don't leak
   wiki.photos = async () => PHOTOS;
@@ -76,6 +80,9 @@ async function say(g, content, username = 'Dean') {
   return out;
 }
 
+// The starting hint box: each line in italics, then the quote's author if any.
+const box = (...lines) => ({ color: 0x3366cc, description: lines.join('\n') });
+const italic = text => text.split('\n').map(line => t('hint_line', { line })).join('\n');
 const react = key => `react:${t(`reactions.${key}`)}`; // win and yes share an emoji
 const text = th => th.sent.map(m => (typeof m === 'string' ? m : m.content)).join('\n');
 
@@ -96,8 +103,10 @@ test('/20questions judges a batch of candidates in one call and opens a topic th
   assert.equal(th.sent.length, 1, 'just the opening message');
   const [opening] = th.sent;
   const ends = Math.floor(jobs[0].data.endsAt / 1000);
-  assert.equal(opening.content, t('rules', { questions: 20, ends, ...t.get('reactions') }));
-  assert.deepEqual(opening.embeds[0], { color: 0x3366cc, title: t('haiku_title'), description: `${POEM}\n${t('who_am_i')}` });
+  assert.equal(opening.content, t('rules', { questions: 20, ends, intro: t('intro_haiku'), ...t.get('reactions') }));
+  assert.ok(opening.content.endsWith(t('intro_haiku') + '\n') || opening.content.endsWith(t('intro_haiku')), 'the rules end with the intro line');
+  assert.deepEqual(opening.embeds, [box(italic(POEM))]);
+  assert.deepEqual(i.followUps, [], 'no private report any more');
   assert.doesNotMatch(JSON.stringify(th.sent), /Amphibians|Frog/, 'neither the topic nor the answer appears in the thread');
 
   const { data } = jobs[0];
@@ -128,38 +137,21 @@ test('a starting hint that gives away part of the title is written again', async
   ai.opening = async () => ({ topic: 'Music', kind: 'haiku', hint: hints.shift(), answers: [] });
   wiki.article = async () => ({ ...FROG, title: 'Abbey Road' });
   const { th } = await startGame();
-  assert.ok(th.sent[0].embeds[0].description.startsWith('four figures cross the stripes'));
+  assert.deepEqual(th.sent[0].embeds, [box(italic('four figures cross the stripes'))]);
 });
 
-test('a quotable topic gets a quote with its author, or "the person in question"', async () => {
+test('a quotable topic gets a quote with its author, hidden when the author is the answer', async () => {
   fakes();
   ai.opening = async () => ({ topic: 'Philosophy', kind: 'quote', hint: '"I think, therefore I am."', author: 'René Descartes', authorIsAnswer: false, answers: [] });
   let { th } = await startGame();
-  assert.deepEqual(th.sent[0].embeds[0], {
-    color: 0x3366cc,
-    title: t('quote_title'),
-    description: ['"I think, therefore I am."', t('quote_author', { author: 'René Descartes' }), t('who_am_i')].join('\n'),
-  });
+  assert.deepEqual(th.sent[0].embeds, [box(italic('"I think, therefore I am."'), t('quote_author', { author: 'René Descartes' }))]);
+  assert.ok(th.sent[0].content.includes(t('intro_quote')));
 
   fakes();
   ai.opening = async () => ({ topic: 'Philosophy', kind: 'quote', hint: '"I think, therefore I am."', author: 'René Descartes', authorIsAnswer: true, answers: [] });
   ({ th } = await startGame());
   assert.ok(th.sent[0].embeds[0].description.includes(t('quote_author', { author: t('author_is_answer') })));
   assert.doesNotMatch(th.sent[0].embeds[0].description, /Descartes/);
-});
-
-test('the starter gets an answer-free report of how the topic was picked', async () => {
-  fakes();
-  wiki.candidates = () => [{ name: 'Easy', title: 'Easy' }, { name: 'Bad', title: 'Bad' }, { name: 'Frog', title: 'Frog' }];
-  ai.screen = async names => names.map(n => ({ suitable: n !== 'Bad', guessable: n !== 'Easy' }));
-  const { i } = await startGame();
-  const [report] = i.followUps;
-  assert.ok(report.flags, 'only visible to the starter');
-  assert.match(report.content, new RegExp(`^${t('report.title').replace(/[*]/g, '\\*')}`));
-  assert.doesNotMatch(report.content, /Easy|Bad|Frog|Amphibians/, 'only counts, no names');
-
-  assert.equal(skill.setupReport({ checked: { total: 30, passed: 12, difficulty: 15, unsuitable: 3 }, counts: { wikipedia: 2, accurate: 2 }, seconds: 9 }),
-    `${t('report.title')}\n${t('report.story', { total: 30, passed: 12, difficulty: 15, unsuitable: 3, wikipedia: 2, fast: 0, accurate: 2, seconds: 9 })}`);
 });
 
 test('/20questions refuses in threads, while a game runs on the server, and reports failures', async () => {
@@ -218,6 +210,21 @@ test('chat is ignored; hints are free', async () => {
   assert.equal(g.data.used, 1);
 });
 
+test('the router knows what just happened, so "I need another" after a hint makes sense', async () => {
+  const g = game();
+  fakes({ routes: ['ask', 'hint', 'chat', 'hint'], results: ['no'] });
+  await say(g, 'Is it big?');
+  await say(g, 'hint please', 'Ana');
+  await say(g, 'hmm', 'Ana');
+  await say(g, 'I need another', 'Ana');
+  assert.deepEqual(calls.routed.at(-1), [
+    t('prompts.recent.ask', { username: 'Dean', text: 'Is it big?', result: 'no' }),
+    t('prompts.recent.hint', { username: 'Ana', text: 'hint please' }),
+    t('prompts.recent.chat', { username: 'Ana', text: 'hmm' }),
+  ]);
+  assert.equal(calls.hint, 2);
+});
+
 test('a win ends the game with the info card and all stats', async () => {
   const g = game({ log: [{ username: 'Ana', text: 'Toad?', result: 'no' }], used: 1 });
   fakes({ routes: ['ask'], results: ['win'] });
@@ -257,6 +264,58 @@ test('the info card shows up to 5 article photos: a gallery of 4 and a thumbnail
   assert.equal(embeds[0].thumbnail, undefined);
 });
 
+test('films and plays get a trailer link in the info card, songs a song link', async () => {
+  for (const kind of ['trailer', 'song']) {
+    const g = game();
+    fakes({ routes: ['stop'] });
+    ai.wrapUp = async () => ({ ...WRAP, video: { kind, search: 'Frog official trailer' } });
+    await say(g, 'stop');
+    const card = g.th.sent.find(m => m.embeds);
+    const video = { title: 'Video: Frog official trailer', url: 'https://www.youtube.com/watch?v=Frog%20official%20trailer' };
+    assert.equal(card.embeds[0].description, `${WRAP.infocard}\n\n${t(`video.${kind}`, video)}\n[${t('read_more')}](${FROG.url})`);
+    assert.ok(t(`video.${kind}`, video).includes(`[${video.title}](${video.url})`), 'the link is named after the video');
+    assert.ok(!g.th.sent.includes(t('video.documentary', video)), 'not posted separately');
+  }
+});
+
+test('a documentary is posted after the stats, before Play again', async () => {
+  const g = game();
+  fakes({ routes: ['stop'] });
+  ai.wrapUp = async () => ({ ...WRAP, video: { kind: 'documentary', search: 'frogs documentary' } });
+  await say(g, 'stop');
+  const video = { title: 'Video: frogs documentary', url: 'https://www.youtube.com/watch?v=frogs%20documentary' };
+  assert.equal(g.th.sent.at(-2), t('video.documentary', video));
+  assert.ok(g.th.sent.at(-2).includes(`[${video.title}](${video.url})`), 'the link is named after the video');
+  assert.ok(g.th.sent.at(-1).components, 'then the Play again button');
+  assert.ok(!g.th.sent.find(m => m.embeds).embeds[0].description.includes(video.url), 'not in the info card');
+});
+
+test('no video when there is none, the search finds nothing, or there is no YouTube key', async () => {
+  let g = game();
+  fakes({ routes: ['stop'] });
+  await say(g, 'stop'); // WRAP.video.kind is 'none'
+  assert.equal(g.th.sent.find(m => m.embeds).embeds[0].description, `${WRAP.infocard}\n\n[${t('read_more')}](${FROG.url})`);
+
+  g = game();
+  fakes({ routes: ['stop'] });
+  ai.wrapUp = async () => ({ ...WRAP, video: { kind: 'documentary', search: 'frogs' } });
+  youtube.search = async () => null;
+  await say(g, 'stop');
+  assert.ok(!g.th.sent.some(m => typeof m === 'string' && m.includes('youtube')));
+
+  const key = process.env.YOUTUBE_API_KEY;
+  delete process.env.YOUTUBE_API_KEY;
+  try {
+    assert.equal(await realYoutubeSearch('frogs documentary'), null, 'no key, no request');
+  } finally {
+    if (key !== undefined) process.env.YOUTUBE_API_KEY = key;
+  }
+});
+
+test('YouTube titles are made safe for a [title](url) link', () => {
+  assert.equal(youtube.plainTitle('Rock &amp; Roll [Official Video] &#39;Live&#39;'), "Rock & Roll Official Video 'Live'");
+});
+
 test('reminders at 15, 10 and 5 questions left; after 20, one final guess', async () => {
   const g = game({ used: 4 });
   fakes({ routes: Array(17).fill('ask'), results: Array(17).fill('no') });
@@ -274,21 +333,24 @@ test('reminders at 15, 10 and 5 questions left; after 20, one final guess', asyn
   assert.equal(g.jobs.length, 0);
 });
 
-test('Play again starts a new game in the same thread and renames it', async () => {
+test('Play again confirms at once, then quietly starts a new game in the same thread', async () => {
   fakes();
   const th = thread('t1');
   th.parentId = 'c1';
   th.setName = async name => { th.name = name; };
   const jobs = [];
   const i = Object.assign(command(''), { customId: 'TwentyQuestions:again', channel: th, isButton: () => true, isChatInputCommand: () => false });
+  const events = [];
+  i.update = async content => { events.push('update'); i.updated = content; };
   i.editReply = async content => { i.edited = content; };
-  i.followUp = async () => {};
+  wiki.candidates = n => { events.push('picking'); return [{ name: 'Frog', title: 'Frog' }].slice(0, n); };
   await skill.handle(i, ctx(jobs));
 
-  assert.equal(i.replied, t('picking'));
-  assert.equal(i.edited, t('started_again', { username: 'Dean' }));
+  assert.deepEqual(events, ['update', 'picking'], 'confirmed before the topic is picked');
+  assert.deepEqual(i.updated, { content: t('play_again_starting', { username: 'Dean' }), components: [] }, 'and the button is removed');
+  assert.equal(i.replied, undefined, 'no other start message');
   assert.equal(th.name, t('thread_name', { topic: 'Amphibians' }));
-  assert.ok(th.sent[0].content.startsWith(t('rules').split('\n')[0]), 'the rules are posted again');
+  assert.deepEqual(th.sent, [{ content: t('intro_haiku'), embeds: [box(italic(POEM))] }], 'just the intro and the hint, no rules');
   assert.deepEqual([jobs[0].data.threadId, jobs[0].data.channelId], ['t1', 'c1']);
 
   // A second click while that game runs is refused, like the command.
@@ -362,13 +424,16 @@ test('candidates are distinct articles of obscurity 2 to 4 from good_articles.js
   assert.ok(wiki.pool.length > 1000);
 });
 
-test('stats counts work per game, even when games overlap', async () => {
-  const a = {};
-  const b = {};
-  const work = async (n, key) => { for (let i = 0; i < n; i++) { await new Promise(r => setImmediate(r)); stats.count(key); } };
-  await Promise.all([stats.track(a, () => work(3, 'fast')), stats.track(b, () => work(2, 'fast'))]);
-  stats.count('fast'); // outside any game: not counted
-  assert.deepEqual([a, b], [{ fast: 3 }, { fast: 2 }]);
+test('request logging is coded in but switched off', () => {
+  const real = console.log;
+  const lines = [];
+  console.log = line => lines.push(line);
+  try {
+    log('Wikipedia', 'query Frog', 'HTTP 200', Date.now());
+  } finally {
+    console.log = real;
+  }
+  assert.deepEqual(lines, []);
 });
 
 test('sanitize makes AI text plain, keeping letters, emoji and lists', () => {

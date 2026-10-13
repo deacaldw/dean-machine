@@ -11,33 +11,25 @@ not_here: "Start the game in a normal text channel, not in a thread."
 picking: "🤔 Thinking of something…"
 start_failed: "Sorry, I couldn't start a game right now. Please try again in a minute."
 started: "🎯 **{username}** started a game of **20 Questions**! Join the thread below."
-started_again: "🎯 **{username}** started a new game of **20 Questions**!"
 thread_name: "20 Questions: {topic}"
 no_game: "There's no 20 Questions game running in this channel."
 stop_not_allowed: "Only the player who started the game or someone with Manage Server can stop it."
 stop_done: "Game stopped."
 
-# How the topic was picked, shown only to the player who started the game. Never names the answer.
-report:
-  title: "🔍 **How I picked this one**"
-  # Counts: total, passed, difficulty, unsuitable (candidates); wikipedia, fast, accurate (requests); seconds.
-  story: "I drew {total} candidates from the article list and checked them all at once (wrong difficulty: {difficulty}, not family-friendly: {unsuitable}, passed: {passed}), then picked one that passed. It took {wikipedia} Wikipedia lookups, {fast} Haiku-class and {accurate} Sonnet-class AI calls, and {seconds} seconds."
-
-# The opening: the rules, then a card with the starting hint (a famous quote, or a haiku).
-# The topic only appears in the thread name.
+# The opening: the rules (only in a new thread), then the starting hint - a famous quote or a haiku - in a box.
 rules: |
-  I'm a person, thing, event or an idea. Guess who I am!
+  I'm thinking of a person, thing, event or an idea - guess what it is!
 
   Ask me questions and I'll answer **yes** {yes}, **no** {no}, or **sort of** {sort_of}. When you're ready, make a guess, or ask for a hint if you're stuck. You only have {questions} questions, but hints are free.
 
   The game ends <t:{ends}:R> or whenever you say "stop the game".
 
-  Ready to go?
-quote_title: "Here's a quote to get you on your way..."
+  Ready? {intro}
+intro_quote: "Here's a quote to get you on your way..."
+intro_haiku: "Here's a haiku to get you on your way..."
+hint_line: "*{line}*" # each line of the quote or haiku
 quote_author: "— {author}"
-author_is_answer: "the person in question" # shown as the author when the author is the answer
-haiku_title: "Here's a Haiku to get you on your way..."
-who_am_i: "Who am I?" # added under the quote or haiku
+author_is_answer: "(author hidden)" # shown as the author when the author is the answer
 
 # Answers are reactions on the player's message. A win also gets the win message.
 reactions:
@@ -58,9 +50,15 @@ stopped: "🛑 Game stopped."
 # End-of-game card and stats, then the button to play again
 play_again_prompt: "Up for another round?"
 play_again: "Play again"
+play_again_starting: "🎲 **{username}** wants another round! Thinking of something…"
 card_loading: "Pulling up the info card…"
 reveal: "# {title}"
 read_more: "Read more"
+# YouTube videos (when YOUTUBE_API_KEY is set): trailers and songs go in the info card; a documentary is posted after it.
+video:
+  trailer: "🎬 Watch the trailer: [{title}]({url})"
+  song: "🎵 Listen on YouTube: [{title}]({url})"
+  documentary: "📺 Want to know more? Here's a documentary: [{title}]({url})"
 stats_title: "**Game stats**"
 stat_most_questions: "🙋 Most questions asked: **{username}** ({count})"
 stat_valuable: "💎 Most valuable question: **{username}**: {text}"
@@ -91,11 +89,22 @@ prompts:
       names, abbreviations, close synonyms, singular and plural. Never broader categories, related things or parts
       (for Frog: not "amphibian", "toad" or "tadpole").
   route: |
-    Sort this message from a Discord game of 20 Questions:
+    Sort the newest message from a Discord game of 20 Questions:
     - ask: a question or a guess about the secret answer
     - hint: asks for a hint
     - stop: asks to stop or end the game
     - chat: anything else
+    Use what just happened to understand short follow-ups: right after a hint, "another one" or "I need another"
+    asks for a hint.
+  route_input: |
+    What just happened:
+    {recent}
+    Newest message: "{message}"
+  # Lines about what just happened, for routing.
+  recent:
+    ask: '{username} asked "{text}" and got "{result}"'
+    hint: '{username} asked "{text}" and got a hint'
+    chat: '{username} said "{text}"'
   # The game so far, given to Sonnet when judging a question and when writing a hint.
   game: |
     This is a game of 20 Questions with yes-or-no answers.
@@ -126,3 +135,6 @@ prompts:
       Don't repeat the title.
     - most_valuable_question, closest_guess, farthest_guess, related_guess (a wrong guess unusually related to the
       answer, like an actor when the answer is their film): pick from the log, or "" for both fields if none fits.
+    - video: for a film or theatre play, kind "trailer" and a YouTube search for its official trailer; for a song,
+      kind "song" and a search for the song; otherwise, if a documentary about it likely exists on YouTube, kind
+      "documentary" and a search for one; else kind "none" and search "".

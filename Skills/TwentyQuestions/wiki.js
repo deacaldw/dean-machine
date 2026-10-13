@@ -1,5 +1,5 @@
 // Candidate topics from good_articles.json, and their Wikipedia articles and photos.
-const { count, log } = require('./stats');
+const { log } = require('./log');
 const goodArticles = require('./good_articles.json'); // [{ name, url, obscurity: 1 (famous) to 5 (obscure) }]
 
 const UA = 'DeanMachine/1.0 (Discord bot; https://github.com/deacaldw/dean-machine)';
@@ -11,7 +11,6 @@ const pool = goodArticles.filter(a => OBSCURITY.includes(a.obscurity));
 
 async function api(params) {
   const url = 'https://en.wikipedia.org/w/api.php?' + new URLSearchParams({ format: 'json', formatversion: 2, ...params });
-  count('wikipedia');
   const started = Date.now();
   const res = await fetch(url, { headers: { 'User-Agent': UA } });
   log('Wikipedia', `${params.generator ?? params.action} ${params.titles}`, `HTTP ${res.status}`, started);
