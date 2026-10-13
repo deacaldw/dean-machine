@@ -9,12 +9,9 @@ stop_description: "Stop the 20 Questions game in this channel"
 already_running: "A game is already running on this server: {link}\nPlease wait until it's over."
 not_here: "Start the game in a normal text channel, not in a thread."
 picking: "🤔 Thinking of something…"
-# Added once a GIF is found. A masked link hides the URL while Discord still plays the GIF.
-picking_with_gif: "{picking} [.]({url})"
-gif_query: "thinking" # GIPHY search for the GIF shown while the game is being set up
-gif_credit: "Gifs in this game are powered by GIPHY."
 start_failed: "Sorry, I couldn't start a game right now. Please try again in a minute."
 started: "🎯 **{username}** started a game of **20 Questions**! Join the thread below."
+started_again: "🎯 **{username}** started a new game of **20 Questions**!"
 thread_name: "20 Questions: {topic}"
 no_game: "There's no 20 Questions game running in this channel."
 stop_not_allowed: "Only the player who started the game or someone with Manage Server can stop it."
@@ -23,17 +20,10 @@ stop_done: "Game stopped."
 # How the topic was picked, shown only to the player who started the game. Never names the answer.
 report:
   title: "🔍 **How I picked this one**"
-  first_try: "The first idea I checked was a good one, so I went with it."
-  difficulty_one: "I thought about {list}, but it wasn't the right difficulty."
-  difficulty_many: "I thought about {list}, but they weren't the right difficulty."
-  unsuitable_one: "One more idea wasn't family-friendly."
-  unsuitable_many: "{count} more ideas weren't family-friendly."
-  picked: "Then I found the one we're playing with now."
-  photo: "I found an Unsplash photo for it."
-  no_photo: "I couldn't find an Unsplash photo this time."
-  work: "It took {wikipedia} Wikipedia lookups, {fast} Haiku-class and {accurate} Sonnet-class AI calls, and {seconds} seconds."
+  # Counts: total, passed, difficulty, unsuitable (candidates); wikipedia, fast, accurate (requests); seconds.
+  story: "I drew {total} candidates from the article list and checked them all at once (wrong difficulty: {difficulty}, not family-friendly: {unsuitable}, passed: {passed}), then picked one that passed. It took {wikipedia} Wikipedia lookups, {fast} Haiku-class and {accurate} Sonnet-class AI calls, and {seconds} seconds."
 
-# The opening: the rules, then a card with the starting hint (a haiku) and an optional photo, then the credits.
+# The opening: the rules, then a card with the starting hint (a famous quote, or a haiku).
 # The topic only appears in the thread name.
 rules: |
   I'm a person, thing, event or an idea. Guess who I am!
@@ -43,10 +33,11 @@ rules: |
   The game ends <t:{ends}:R> or whenever you say "stop the game".
 
   Ready to go?
-hint_title: "Here's a Haiku to get you on your way..."
-who_am_i: "Who am I?" # added under the haiku
-photo_credit: "Photo by [{name}]({profile}) on [Unsplash]({home})."
-credits: "-# {credits}" # small line under the starting hint
+quote_title: "Here's a quote to get you on your way..."
+quote_author: "— {author}"
+author_is_answer: "the person in question" # shown as the author when the author is the answer
+haiku_title: "Here's a Haiku to get you on your way..."
+who_am_i: "Who am I?" # added under the quote or haiku
 
 # Answers are reactions on the player's message. A win also gets the win message.
 reactions:
@@ -64,7 +55,9 @@ lose: "💥 That was your final guess. Better luck next time!"
 timeout: "⏰ Time's up!"
 stopped: "🛑 Game stopped."
 
-# End-of-game card and stats
+# End-of-game card and stats, then the button to play again
+play_again_prompt: "Up for another round?"
+play_again: "Play again"
 card_loading: "Pulling up the info card…"
 reveal: "# {title}"
 read_more: "Read more"
@@ -78,18 +71,22 @@ stat_related: "🔗 Weirdly related guess: **{username}**: {text}"
 # Instructions for the AI. Kept short: the models know what 20 Questions is.
 prompts:
   screen: |
-    We're choosing the secret answer for a game of 20 Questions. Judge the Wikipedia article above.
+    We're choosing the secret answer for a game of 20 Questions from these numbered Wikipedia topics.
+    Judge every topic, by its number:
     - suitable: no unsavoury content, except what would be taught in K-12 school, shown in a museum or fine in a PG-13 film.
-    - guessable: a young adult could guess it in 20 questions from general education and knowledge, but a 13-year-old couldn't.
-  setup: |
-    The article above is the secret answer in a game of 20 Questions.
-    - topic: its broad theme in 1 to 4 words, without giving it away (for a World War 1 tank: "World War 1").
-    - searches: three general stock photo searches for that theme, most fitting first (for a World War 1 tank:
-      "World War 1", "history", "soldiers"). Never the answer itself.
+    - guessable: it's something taught at school, something from pop culture, science or history, or something
+      encountered in day-to-day life. It can't simply be one of the 5,000 most common English words (like "Dog" or
+      "Water"), though its name may contain them (like "Black Panther" or "Great Wall of China").
   opening: |
     The article above is the secret answer in a game of 20 Questions.
-    - poem: a haiku of three lines, spoken by the subject itself in the first person (a designer speaks as the
-      designer, not as a dress). Hint at it without naming it. Just the three lines.
+    - topic: a very broad category in one or two words, like "Famous Streets", "Warfare" or "Medicine". Nothing
+      more specific, as that would be a strong hint.
+    - kind and hint: if it's at all quotable, kind "quote" and a famous quote by it or from it (people, books,
+      films, songs and languages are quotable; a language is quoted in that language), or else a quote about it that's
+      famous in history. Otherwise kind "haiku" and a three-line haiku spoken by the subject itself in the first
+      person. Just the quote or the haiku, never the answer's name or any part or form of it (pick another quote if
+      needed).
+    - author: who said or wrote the quote ("" for a haiku); authorIsAnswer: true if that author is the answer.
     - answers: 10 to 20 short guesses that should win because they mean exactly the same thing: names, alternative
       names, abbreviations, close synonyms, singular and plural. Never broader categories, related things or parts
       (for Frog: not "amphibian", "toad" or "tadpole").
@@ -99,16 +96,13 @@ prompts:
     - hint: asks for a hint
     - stop: asks to stop or end the game
     - chat: anything else
-  quotes: |
-    Quote up to 5 short passages from the article above, word for word, that help with this. Return none if nothing
-    is relevant.
   # The game so far, given to Sonnet when judging a question and when writing a hint.
   game: |
     This is a game of 20 Questions with yes-or-no answers.
     Secret answer: {title}
     Winning answers (a guideline, not a complete list): {answers}
-    Facts from Wikipedia:
-    {quotes}
+    From its Wikipedia article:
+    {facts}
     Questions so far:
     {log}
     Hints so far:
@@ -125,7 +119,6 @@ prompts:
   hint: |
     Write one hint for the players: a short, simple, factual sentence that helps from what they've asked so far.
     Not a riddle. Don't name the secret answer or repeat earlier hints.
-  hint_need: "A new, simple fact for players who have asked: {asked}"
   wrap_up: |
     A game of 20 Questions about the article above has ended ({outcome}). The game log is below.
     - infocard: a museum-style info card in Discord markdown: one sentence saying what it is, then 3 or 4 short

@@ -13,8 +13,7 @@ A Discord bot for multiple servers. Each feature is a self-contained **skill**; 
 ## Setup
 
 1. Install Node.js 22+ and run `npm install`.
-2. Copy `res/.env.example` to `res/.env` and set `DISCORD_TOKEN`, `APP_ID` and `ANTHROPIC_API_KEY`
-   (optionally `UNSPLASH_ACCESS_KEY` for topic photos and `GIPHY_API_KEY` for GIFs in 20 Questions).
+2. Copy `res/.env.example` to `res/.env` and set `DISCORD_TOKEN`, `APP_ID` and `ANTHROPIC_API_KEY`.
    In the Discord Developer Portal, enable **Message Content Intent** on the Bot page.
 3. `npm start`. The bot prints an invite link (also saved to `invite.txt`).
 
