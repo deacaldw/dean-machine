@@ -1,186 +1,222 @@
-const { MessageFlags, PermissionFlagsBits } = require('discord.js');
+const path = require('path');
+const { MessageFlags, PermissionFlagsBits, ButtonStyle } = require('discord.js');
 const t = require('../../src/strings')(__dirname);
 const wiki = require('./wiki');
 const ai = require('./ai');
-const unsplash = require('./unsplash');
-const gifs = require('./gifs');
+const youtube = require('./youtube');
 
-const MAX_QUESTIONS = 20; // guesses count too; hints are free
+const MAX_QUESTIONS = 20; // the question after the 20th is the final guess
 const MINUTES = 20;
-const PICK_ATTEMPTS = 8; // articles to try before giving up
-const HEADS_UP = [10, 5]; // questions left when a heads-up is posted
-const WARNINGS = [10, 5, 2, 1]; // minutes left when the countdown is posted
-const CLOSE_GIF_MS = 3 * 60 * 1000; // at most one "so close" GIF this often
+const BATCH_SIZE = 30; // candidates judged together in one Sonnet call
+const PICK_ROUNDS = 3; // batches to try before giving up
+const QUESTION_REMINDERS = [15, 10, 5]; // questions left
+const TIME_REMINDERS = [15, 10, 5, 1]; // minutes left
 const CHECK_MS = 30 * 1000; // how often to check the thread still exists
 const COLOR = 0x3366cc;
+const RECENT = 6; // lines about what just happened, given to the router
+const PLAY_AGAIN = `${path.basename(__dirname)}:again`; // button customId; the core routes "<Skill>:..." here
 
 const lastCheck = {}; // threadId -> timestamp, in memory only
 const starting = new Set(); // servers where a game is being set up right now
 
 const ephemeral = (interaction, content) => interaction.reply({ content, flags: MessageFlags.Ephemeral });
 const cut = (text, max) => (text.length > max ? text.slice(0, max - 1) + '…' : text);
-const threadLink = data => `https://discord.com/channels/${data.guildId}/${data.threadId}`;
+const threadLink = game => `https://discord.com/channels/${game.guildId}/${game.threadId}`;
+const nameOf = source => source.member?.displayName ?? (source.user ?? source.author).username;
 
-// Spelling-tolerant comparison of a guess with the title and its redirects ("Frogg" = "Frog").
-const normalize = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
-  .replace(/\(.*?\)/g, '').replace(/[^a-z0-9]+/g, ' ').replace(/^(the|a|an) /, '').trim();
+// --- Setting up ---
 
-function distance(a, b) {
-  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i++) {
-    let prev = row[0];
-    row[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const next = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
-      prev = row[j];
-      row[j] = next;
-    }
-  }
-  return row[b.length];
-}
-
-function matches(guess, article) {
-  const g = normalize(guess);
-  return !!g && [article.title, ...article.aliases].some(name => {
-    const n = normalize(name);
-    return n === g || (n.length >= 6 && distance(n, g) <= Math.floor(n.length / 6));
-  });
-}
-
+// Draws a batch of candidates from good_articles.json, has Sonnet judge them all in one call, and fetches a random
+// one that passed. Tries another batch if none did.
 async function pickArticle() {
-  for (let i = 0; i < PICK_ATTEMPTS; i++) {
-    const article = await wiki.pick();
-    const { suitable, guessable } = await ai.screen(article);
-    if (suitable && guessable) return article;
+  for (let round = 0; round < PICK_ROUNDS; round++) {
+    const batch = wiki.candidates(BATCH_SIZE);
+    const verdicts = await ai.screen(batch.map(c => c.name));
+    const passed = batch.filter((_, i) => verdicts[i].suitable && verdicts[i].guessable).sort(() => Math.random() - 0.5);
+    for (const candidate of passed) {
+      const article = await wiki.article(candidate.title);
+      if (article) return article;
+    }
   }
   throw new Error('No suitable article found');
 }
 
-// A card with a random GIF for a gif_queries entry, or null. GIFs are a garnish: failures are ignored.
-async function gifCard(name) {
-  try {
-    const url = await gifs.random(t(`gif_queries.${name}`));
-    return url ? { color: COLOR, image: { url }, footer: { text: t('gif_credit') } } : null;
-  } catch (err) {
-    console.error(`TwentyQuestions: no GIF: ${err.message}`);
-    return null;
-  }
+// True if the hint gives away a word of the title ("my road" for Abbey Road). Short words are ignored.
+const leaksTitle = (hint, title) => title.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(word => word.length > 3).some(word => hint.toLowerCase().includes(word));
+
+// The opening from Sonnet, written once more if the starting hint gives away part of the answer.
+async function writeOpening(article) {
+  const opening = await ai.opening(article);
+  return leaksTitle(opening.hint, article.title) ? ai.opening(article) : opening;
 }
 
-// A topic photo from Unsplash that the AI has checked, or null. Never stops a game from starting.
-async function pickPhoto(article, opening) {
-  try {
-    const photos = await unsplash.search(opening.image_query);
-    if (!photos.length) return null;
-    const photo = photos[(await ai.pickPhoto(article, opening.topic, photos)) - 1] ?? null;
-    if (photo) unsplash.reportUse(photo);
-    return photo;
-  } catch (err) {
-    console.error(`TwentyQuestions: no photo: ${err.message}`);
-    return null;
-  }
+// "Here's a quote/haiku to get you on your way..." and a box with it in italics (and the quote's author).
+function startingHint({ hint, kind, author, authorIsAnswer }) {
+  const lines = hint.split('\n').filter(line => line.trim()).map(line => t('hint_line', { line: line.trim() }));
+  if (kind === 'quote') lines.push(t('quote_author', { author: authorIsAnswer || !author ? t('author_is_answer') : author }));
+  return { intro: t(kind === 'quote' ? 'intro_quote' : 'intro_haiku'), embeds: [{ color: COLOR, description: lines.join('\n') }] };
 }
 
-// The rules as text, with the starting hint card (poem, then photo; Discord always puts card images last).
-function openingMessage(opening, photo, endsAt) {
-  const poem = opening.poem.split('\n').filter(line => line.trim()).map(line => t('riddle_line', { line: line.trim() }));
-  return {
-    content: t('rules', { questions: MAX_QUESTIONS, ends: Math.floor(endsAt / 1000), ...t.get('reactions') }),
-    embeds: [{ color: COLOR, title: t('hint_title'), description: poem.join('\n'), image: photo ? { url: photo.url } : undefined }],
-  };
-}
+const playAgainButton = () => ({
+  content: t('play_again_prompt'),
+  components: [{ type: 1, components: [{ type: 2, style: ButtonStyle.Primary, label: t('play_again'), custom_id: PLAY_AGAIN }] }],
+});
 
-// Small credit line under the card. Link previews are suppressed so it stays one line.
-function photoCredit(photo) {
-  return {
-    content: t('photo_credit', { name: photo.photographer, profile: photo.profile, home: unsplash.HOME }),
-    flags: MessageFlags.SuppressEmbeds,
-  };
-}
-
-// Ends the game once: result line, then the answer with an info card, then stats.
-async function finish(data, thread, outcome, username) {
-  if (data.over) return;
-  data.over = true;
-  const { article, log } = data;
-  const send = msg => thread.send(msg).catch(() => {});
-  await send(t(outcome, { username, used: data.used, max: MAX_QUESTIONS }));
-  await send(t('card_loading'));
-  thread.sendTyping().catch(() => {});
-
-  let wrap = null;
-  try {
-    wrap = await ai.wrapUp(article, log, outcome);
-  } catch (err) {
-    console.error(`TwentyQuestions: wrap-up failed: ${err.message}`);
-  }
-  const card = wrap?.infocard || cut(article.text, 600);
-  await send({
-    content: t('reveal', { title: ai.sanitize(article.title) }),
-    embeds: [{ color: COLOR, description: cut(`${card}\n\n[${t('read_more')}](${article.url})`, 4096), image: article.image ? { url: article.image } : undefined }],
-  });
-
-  const counts = {};
-  for (const e of log) if (e.intent === 'question' || e.intent === 'guess') counts[e.username] = (counts[e.username] ?? 0) + 1;
-  const [top] = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  const lines = [];
-  if (top) lines.push(t('stat_most_questions', { username: top[0], count: top[1] }));
-  for (const [key, label] of [['most_valuable_question', 'stat_valuable'], ['closest_guess', 'stat_closest'], ['farthest_guess', 'stat_farthest'], ['related_guess', 'stat_related']]) {
-    const e = wrap?.[key];
-    if (e?.username && e?.text) lines.push(t(label, { username: e.username, text: cut(e.text, 200) }));
-  }
-  if (lines.length) await send([t('stats_title'), ...lines].join('\n'));
-}
-
+// Starts a game from /20questions (in a new thread, with the rules) or from the Play again button (quietly, in the
+// same thread, renamed for the new topic).
 async function start(interaction, ctx) {
-  if (interaction.channel?.isThread()) return ephemeral(interaction, t('not_here'));
-  // One game per server at a time, which also keeps costs down.
-  const running = ctx.jobs[0];
+  const again = interaction.isButton?.() ?? false;
+  if (!again && interaction.channel?.isThread()) return ephemeral(interaction, t('not_here'));
+  const running = ctx.jobs[0]; // one game per server at a time
   if (running || starting.has(interaction.guildId)) {
     return ephemeral(interaction, t('already_running', { link: running ? threadLink(running.data) : '' }));
   }
 
   starting.add(interaction.guildId);
   try {
-    await interaction.reply(t('picking'));
-    // A "thinking" GIF joins the message once found; it's awaited before the message changes again.
-    const thinking = gifCard('thinking').then(card => card && interaction.editReply({ embeds: [card] })).catch(() => {});
+    // Play again: confirm at once and remove the button (no second click) while the next topic is picked.
+    if (again) await interaction.update({ content: t('play_again_starting', { username: nameOf(interaction) }), components: [] });
+    else await interaction.reply(t('picking'));
+
     let article, opening;
     try {
       article = await pickArticle();
-      opening = await ai.opening(article);
+      [opening, article.photos] = await Promise.all([writeOpening(article), wiki.photos(article).catch(() => [])]);
     } catch (err) {
       console.error(`TwentyQuestions: couldn't start: ${err.message}`);
-      await thinking;
-      return interaction.editReply({ content: t('start_failed'), embeds: [] });
+      return interaction.editReply(t('start_failed'));
     }
-    const photo = await pickPhoto(article, opening);
-    const username = interaction.member?.displayName ?? interaction.user.username;
-    await thinking;
-    const message = await interaction.editReply({ content: t('started', { username }), embeds: [] }); // drops the GIF
-    const thread = await message.startThread({ name: cut(t('thread_name', { topic: opening.topic }), 100), autoArchiveDuration: 60 });
+
+    const name = cut(t('thread_name', { topic: opening.topic }), 100);
     const endsAt = Date.now() + MINUTES * 60000;
-    await thread.send(openingMessage(opening, photo, endsAt));
-    if (photo) await thread.send(photoCredit(photo));
+    const { intro, embeds } = startingHint(opening);
+    let thread;
+    if (again) {
+      thread = interaction.channel;
+      await thread.setName(name).catch(err => console.error(`TwentyQuestions: couldn't rename the thread: ${err.message}`));
+      await thread.send({ content: intro, embeds });
+    } else {
+      const message = await interaction.editReply(t('started', { username: nameOf(interaction) }));
+      thread = await message.startThread({ name, autoArchiveDuration: 60 });
+      const rules = t('rules', { questions: MAX_QUESTIONS, ends: Math.floor(endsAt / 1000), intro, ...t.get('reactions') });
+      await thread.send({ content: rules, embeds });
+    }
+
     ctx.add({
       guildId: interaction.guildId,
-      channelId: interaction.channelId,
+      channelId: again ? thread.parentId : interaction.channelId,
       threadId: thread.id,
       starterId: interaction.user.id,
-      article,
-      riddle: opening.poem,
+      article, // cached: its opening is given to Sonnet when judging
+      answers: [...new Set([article.title, ...opening.answers])], // guesses that should win (a guideline for Sonnet)
       topic: opening.topic,
       endsAt,
       warned: [],
       used: 0,
-      finalGuess: false,
-      log: [],
+      log: [], // { username, text, result }
+      recent: [], // lines about what just happened, for the router
       hints: [],
       over: false,
     });
   } finally {
     starting.delete(interaction.guildId);
   }
+}
+
+// --- Playing ---
+
+// Remembers what just happened (for the router), keeping only the last few lines.
+function remember(game, kind, message, extra = {}) {
+  const line = t(`prompts.recent.${kind}`, { username: nameOf(message), text: cut(message.content, 150), ...extra });
+  game.recent = [...(game.recent ?? []), line].slice(-RECENT);
+}
+
+// A question or guess, judged by Sonnet. Answered with a reaction.
+async function ask(game, message, ctx, jobId) {
+  const question = cut(message.content, 300);
+  const result = await ai.judge(game, question);
+  if (game.over) return;
+  game.used++;
+  game.log.push({ username: nameOf(message), text: question, result });
+  remember(game, 'ask', message, { result });
+  await message.react(t(`reactions.${result}`));
+
+  if (result === 'win' || game.used > MAX_QUESTIONS) {
+    await finish(game, message.channel, result === 'win' ? 'win' : 'lose', nameOf(message));
+    return ctx.remove(jobId);
+  }
+  const left = MAX_QUESTIONS - game.used;
+  if (left === 0) await message.channel.send(t('last_question'));
+  else if (QUESTION_REMINDERS.includes(left)) await message.channel.send(t('questions_left', { left }));
+}
+
+// A hint from Sonnet, based on what the players have asked so far.
+async function hint(game, message) {
+  message.channel.sendTyping().catch(() => {});
+  const text = await ai.hint(game);
+  if (game.over) return;
+  game.hints.push(text);
+  remember(game, 'hint', message);
+  await message.reply({ content: t('hint', { hint: text }), allowedMentions: { repliedUser: false } });
+}
+
+// --- Ending ---
+
+// The final info card with the article's photos. Discord shows up to 4 images as a gallery when several cards
+// share a URL, so photos 1-4 form the gallery and a fifth goes in the corner thumbnail.
+function infoCard(article, text, extra = '') {
+  const photos = article.photos ?? (article.image ? [article.image] : []);
+  const [first, ...more] = photos.slice(0, 4);
+  return [
+    {
+      color: COLOR,
+      url: article.url,
+      description: cut(`${text || cut(article.text, 600)}\n\n${extra ? `${extra}\n` : ''}[${t('read_more')}](${article.url})`, 4096),
+      image: first ? { url: first } : undefined,
+      thumbnail: photos[4] ? { url: photos[4] } : undefined,
+    },
+    ...more.map(url => ({ url: article.url, image: { url } })),
+  ];
+}
+
+// A YouTube video picked by the wrap-up: { kind: 'trailer' | 'song' | 'documentary', title, url }, or null.
+async function findVideo(video) {
+  if (!video || video.kind === 'none') return null;
+  const found = await youtube.search(video.search); // never throws; null without a key or on any failure
+  return found ? { kind: video.kind, ...found } : null;
+}
+
+// Ends the game once: result line, then the answer with an info card (with a trailer or song link), then stats, a
+// documentary if there's one, and the button to play again.
+async function finish(game, thread, outcome, username) {
+  if (game.over) return;
+  game.over = true;
+  const send = msg => thread.send(msg).catch(() => {});
+  await send(t(outcome, { username, used: Math.min(game.used, MAX_QUESTIONS), max: MAX_QUESTIONS }));
+  await send(t('card_loading'));
+  thread.sendTyping().catch(() => {});
+
+  let wrap = null;
+  try {
+    wrap = await ai.wrapUp(game, outcome);
+  } catch (err) {
+    console.error(`TwentyQuestions: wrap-up failed: ${err.message}`);
+  }
+  const video = await findVideo(wrap?.video);
+  const link = video && video.kind !== 'documentary' ? t(`video.${video.kind}`, video) : '';
+  await send({ content: t('reveal', { title: ai.sanitize(game.article.title) }), embeds: infoCard(game.article, wrap?.infocard, link) });
+
+  const asked = {};
+  for (const e of game.log) asked[e.username] = (asked[e.username] ?? 0) + 1;
+  const [top] = Object.entries(asked).sort((a, b) => b[1] - a[1]);
+  const lines = top ? [t('stat_most_questions', { username: top[0], count: top[1] })] : [];
+  for (const [key, label] of [['most_valuable_question', 'stat_valuable'], ['closest_guess', 'stat_closest'], ['farthest_guess', 'stat_farthest'], ['related_guess', 'stat_related']]) {
+    const pick = wrap?.[key];
+    if (pick?.username && pick?.text) lines.push(t(label, { username: pick.username, text: cut(pick.text, 200) }));
+  }
+  if (lines.length) await send([t('stats_title'), ...lines].join('\n'));
+  if (video?.kind === 'documentary') await send(t('video.documentary', video));
+  await send(playAgainButton());
 }
 
 async function stop(interaction, ctx) {
@@ -191,7 +227,7 @@ async function stop(interaction, ctx) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const thread = await interaction.client.channels.fetch(job.data.threadId).catch(() => null);
   if (thread) await finish(job.data, thread, 'stopped');
-  else job.data.over = true;
+  job.data.over = true;
   ctx.remove(job.id);
   await interaction.editReply(t('stop_done'));
 }
@@ -203,108 +239,55 @@ module.exports = {
   ],
 
   async handle(interaction, ctx) {
+    if (interaction.isButton?.()) return interaction.customId === PLAY_AGAIN ? start(interaction, ctx) : undefined;
     if (!interaction.isChatInputCommand()) return;
     return interaction.commandName === t('command') ? start(interaction, ctx) : stop(interaction, ctx);
   },
 
-  // Every message in a game thread: a question, guess, hint request, stop request, or chat (ignored).
+  // Every message in a game thread is routed to ask, hint, stop or chat (ignored).
   async message(message, ctx) {
     const job = ctx.jobs.find(j => j.data.threadId === message.channelId);
     if (!job || job.data.over) return;
-    const data = job.data;
-    const username = message.member?.displayName ?? message.author.username;
-    const reply = content => message.reply({ content, allowedMentions: { repliedUser: false } });
-    // Answers are reactions: yes, no or sort of, plus a "close" reaction for near misses.
-    // Close answers also get a "so close" GIF, at most once every few minutes.
-    const react = async result => {
-      await message.react(t(`reactions.${result === 'yes_more_specific' ? 'yes' : result === 'not_quite' ? 'no' : result}`));
-      if (result !== 'yes_more_specific' && result !== 'not_quite') return;
-      await message.react(t('reactions.close'));
-      if (Date.now() - (data.lastCloseGif ?? 0) < CLOSE_GIF_MS) return;
-      data.lastCloseGif = Date.now();
-      const card = await gifCard('so_close');
-      if (card) await message.channel.send({ embeds: [card] });
-    };
-
-    const { intent, answer, guess } = await ai.interpret(data.article, data.log, username, message.content);
-    if (data.over || intent === 'chat') return;
-    const entry = { username, intent, text: cut(message.content, 300) };
-
-    if (intent === 'stop') {
-      data.log.push(entry);
-      await finish(data, message.channel, 'stopped');
+    const game = job.data;
+    const route = await ai.route(message.content, game.recent);
+    if (game.over) return;
+    if (route === 'chat') return remember(game, 'chat', message);
+    if (route === 'ask') return ask(game, message, ctx, job.id);
+    if (route === 'hint') return hint(game, message);
+    if (route === 'stop') {
+      await finish(game, message.channel, 'stopped');
       return ctx.remove(job.id);
-    }
-
-    if (intent === 'hint') {
-      message.channel.sendTyping().catch(() => {});
-      const hint = await ai.hint(data.article, data.log, data.hints);
-      data.hints.push(hint);
-      data.log.push(entry);
-      return reply(t('hint', { hint }));
-    }
-
-    if (intent === 'question') {
-      if (data.finalGuess) return reply(t('guess_now'));
-      data.used++;
-      data.log.push({ ...entry, answer });
-      await react(answer);
-    } else {
-      // A guess: exact or near-exact names win outright; otherwise a "yes" needs a second opinion.
-      const named = guess || message.content;
-      let result = ['yes', 'yes_more_specific', 'no', 'not_quite'].includes(answer) ? answer : 'no';
-      if (matches(named, data.article)) result = 'yes';
-      else if (result === 'yes') result = await ai.verify(data.article, named);
-      const final = data.finalGuess;
-      data.used++;
-      data.log.push({ ...entry, answer: result });
-      await react(result);
-      if (result === 'yes' || final) {
-        await finish(data, message.channel, result === 'yes' ? 'win' : 'lose', username);
-        return ctx.remove(job.id);
-      }
-    }
-
-    if (HEADS_UP.includes(MAX_QUESTIONS - data.used)) {
-      await message.channel.send(t('questions_left', { left: MAX_QUESTIONS - data.used }));
-    }
-    if (data.used >= MAX_QUESTIONS && !data.finalGuess) {
-      data.finalGuess = true;
-      await message.channel.send(t('last_question'));
     }
   },
 
-  // Posts the countdown, ends the game when time runs out, or silently when the thread is gone.
-  async run(data, client) {
-    if (data.over) return true;
-    data.warned ??= [];
+  // Reminds players of the time left, ends the game when time runs out, or silently when the thread is gone.
+  async run(game, client) {
+    if (game.over) return true;
     const now = Date.now();
-    const left = data.endsAt - now;
-    const due = left > 0 ? WARNINGS.filter(m => left <= m * 60000 && !data.warned.includes(m)) : [];
-    if (left > 0 && !due.length && now - (lastCheck[data.threadId] ?? 0) < CHECK_MS) return false;
-    lastCheck[data.threadId] = now;
+    const left = game.endsAt - now;
+    const due = left > 0 ? TIME_REMINDERS.filter(m => left <= m * 60000 && !game.warned.includes(m)) : [];
+    if (left > 0 && !due.length && now - (lastCheck[game.threadId] ?? 0) < CHECK_MS) return false;
+    lastCheck[game.threadId] = now;
 
     let thread;
     try {
-      thread = await client.channels.fetch(data.threadId);
+      thread = await client.channels.fetch(game.threadId);
     } catch (err) {
-      if (err.status === 403 || err.status === 404) {
-        delete lastCheck[data.threadId];
-        return true;
-      }
-      return false; // temporary problem; try again later
+      if (err.status !== 403 && err.status !== 404) return false; // temporary problem; try again later
+      delete lastCheck[game.threadId];
+      return true;
     }
     if (left > 0) {
       if (due.length) {
-        data.warned.push(...due); // after downtime, several may be due at once; post just one
-        await thread.send(t('warning', { ends: Math.floor(data.endsAt / 1000) })).catch(() => {});
+        game.warned.push(...due); // after downtime several may be due at once; post just one
+        await thread.send(t('time_left', { ends: Math.floor(game.endsAt / 1000) })).catch(() => {});
       }
       return false;
     }
-    await finish(data, thread, 'timeout');
-    delete lastCheck[data.threadId];
+    await finish(game, thread, 'timeout');
+    delete lastCheck[game.threadId];
     return true;
   },
 
-  matches, // exported for tests
+  leaksTitle, // exported for tests
 };

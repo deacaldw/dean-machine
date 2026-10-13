@@ -1,50 +1,37 @@
-// Picks a well-known English Wikipedia article from one of three curated sources.
+// Candidate topics from good_articles.json, and their Wikipedia articles and photos.
+const { log } = require('./log');
+const goodArticles = require('./good_articles.json'); // [{ name, url, obscurity: 1 (famous) to 5 (obscure) }]
+
 const UA = 'DeanMachine/1.0 (Discord bot; https://github.com/deacaldw/dean-machine)';
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const OBSCURITY = [2, 3, 4]; // famous enough to guess, not so famous it's too easy
 const MAX_TEXT = 20000; // characters of article text kept for the AI
 const MIN_TEXT = 3000; // skip stubs
 
-const random = list => list[Math.floor(Math.random() * list.length)];
-const randomInt = (min, max) => min + Math.floor(Math.random() * (max - min + 1));
-const lastYear = () => new Date().getUTCFullYear() - 1;
+const pool = goodArticles.filter(a => OBSCURITY.includes(a.obscurity));
 
-async function api(host, params) {
-  const url = `https://${host}/w/api.php?` + new URLSearchParams({ format: 'json', formatversion: 2, ...params });
+async function api(params) {
+  const url = 'https://en.wikipedia.org/w/api.php?' + new URLSearchParams({ format: 'json', formatversion: 2, ...params });
+  const started = Date.now();
   const res = await fetch(url, { headers: { 'User-Agent': UA } });
-  if (!res.ok) throw new Error(`${host} returned ${res.status}`);
+  log('Wikipedia', `${params.generator ?? params.action} ${params.titles}`, `HTTP ${res.status}`, started);
+  if (!res.ok) throw new Error(`Wikipedia returned ${res.status}`);
   return res.json();
 }
 
-const wikitext = async (host, page) =>
-  (await api(host, { action: 'parse', prop: 'wikitext', redirects: 1, page })).parse?.wikitext ?? '';
+// `n` different random candidates from the pool: [{ name, title, obscurity }]
+function candidates(n) {
+  const picked = new Set();
+  while (picked.size < Math.min(n, pool.length)) picked.add(pool[Math.floor(Math.random() * pool.length)]);
+  return [...picked].map(a => ({ name: a.name, title: decodeURIComponent(a.url.split('/wiki/')[1]).replace(/_/g, ' '), obscurity: a.obscurity }));
+}
 
-// Bold links mark the featured article in TFA and DYK pages: '''[[Title]]''' or '''[[Title|text]]'''
-const boldLinks = text => [...text.matchAll(/'''+\[\[([^\]|#]+)/g)].map(m => m[1].trim());
-
-const sources = {
-  async featured() {
-    const date = `${random(MONTHS)} ${randomInt(1, 28)}, ${randomInt(2007, lastYear())}`;
-    return boldLinks(await wikitext('en.wikipedia.org', `Wikipedia:Today's featured article/${date}`))[0];
-  },
-  async didYouKnow() {
-    const page = `Wikipedia:Did you know archive/${randomInt(2008, lastYear())}/${random(MONTHS)}`;
-    return random(boldLinks(await wikitext('en.wikipedia.org', page)));
-  },
-  async vital() {
-    const list = await wikitext('www.wikidata.org', 'Wikidata:List of 1000 articles every Wikipedia should have');
-    const id = random([...list.matchAll(/^\| \[\[(Q\d+)\|Q\d+\]\]$/gm)].map(m => m[1]));
-    const entity = (await api('www.wikidata.org', { action: 'wbgetentities', ids: id, props: 'sitelinks', sitefilter: 'enwiki' })).entities?.[id];
-    return entity?.sitelinks?.enwiki?.title;
-  },
-};
-
-// Full text, image, URL and alternative names (redirects) of an article, or null if unsuitable.
+// Full text, image and URL of an article, or null if it's a stub, list or disambiguation page.
 async function article(title) {
-  const data = await api('en.wikipedia.org', {
+  const data = await api({
     action: 'query', redirects: 1, titles: title,
-    prop: 'extracts|pageimages|info|pageprops|redirects',
+    prop: 'extracts|pageimages|info|pageprops',
     explaintext: 1, piprop: 'thumbnail', pithumbsize: 800, inprop: 'url',
-    ppprop: 'disambiguation', rdlimit: 'max', rdnamespace: 0,
+    ppprop: 'disambiguation',
   });
   const page = data.query?.pages?.[0];
   if (!page || page.missing || page.pageprops?.disambiguation !== undefined) return null;
@@ -53,23 +40,23 @@ async function article(title) {
     title: page.title,
     url: page.fullurl,
     image: page.thumbnail?.source ?? null,
-    aliases: (page.redirects ?? []).map(r => r.title).slice(0, 50),
     text: page.extract.slice(0, MAX_TEXT),
   };
 }
 
-// A random article from a random source; retries on dead ends.
-async function pick(attempts = 5) {
-  for (let i = 0; i < attempts; i++) {
-    try {
-      const title = await random(Object.values(sources))();
-      const found = title && await article(title);
-      if (found) return found;
-    } catch {
-      // try another source
-    }
-  }
-  throw new Error('No usable Wikipedia article found');
+// URLs of up to `max` photos from an article, its main image first. Icons and logos (SVGs) are skipped.
+async function photos(article, max = 5) {
+  const data = await api({
+    action: 'query', generator: 'images', titles: article.title, gimlimit: 50,
+    prop: 'imageinfo', iiprop: 'url|mime', iiurlwidth: 800,
+  });
+  const found = (data.query?.pages ?? [])
+    .map(p => p.imageinfo?.[0])
+    .filter(info => /^image\/(jpeg|png|gif)$/.test(info?.mime ?? ''))
+    .map(info => info.thumburl ?? info.url);
+  const fileOf = url => decodeURIComponent(url.split('?')[0].split('/').pop()).replace(/^\d+px-/, '');
+  const main = article.image ? [article.image] : [];
+  return [...main, ...found.filter(url => !main.some(m => fileOf(m) === fileOf(url)))].slice(0, max);
 }
 
-module.exports = { pick, article, boldLinks };
+module.exports = { candidates, article, photos, pool };

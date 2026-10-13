@@ -9,11 +9,6 @@ stop_description: "Stop the 20 Questions game in this channel"
 already_running: "A game is already running on this server: {link}\nPlease wait until it's over."
 not_here: "Start the game in a normal text channel, not in a thread."
 picking: "🤔 Thinking of something…"
-# GIPHY searches. GIPHY asks apps to credit it wherever its GIFs are shown.
-gif_queries:
-  thinking: "thinking" # while the game is being set up
-  so_close: "so close" # on a close answer, at most every few minutes
-gif_credit: "Powered by GIPHY"
 start_failed: "Sorry, I couldn't start a game right now. Please try again in a minute."
 started: "🎯 **{username}** started a game of **20 Questions**! Join the thread below."
 thread_name: "20 Questions: {topic}"
@@ -21,32 +16,30 @@ no_game: "There's no 20 Questions game running in this channel."
 stop_not_allowed: "Only the player who started the game or someone with Manage Server can stop it."
 stop_done: "Game stopped."
 
-# The opening: the rules, then a card with the starting hint (a short poem) and an optional photo,
-# then the photo credit. The topic only appears in the thread name.
+# The opening: the rules (only in a new thread), then the starting hint - a famous quote or a haiku - in a box.
 rules: |
-  I'm a person, a thing, an event or an idea. Guess who I am!
+  I'm thinking of a person, thing, event or an idea - guess what it is!
 
-  Ask me yes-or-no questions, take a guess, or ask for a hint if you're stuck. You only have {questions} questions, but hints are free.
-
-  I'll react with {yes} for yes, {no} for no or {sort_of} for sort of, and add {close} when you're close.
+  Ask me questions and I'll answer **yes** {yes}, **no** {no}, or **sort of** {sort_of}. When you're ready, make a guess, or ask for a hint if you're stuck. You only have {questions} questions, but hints are free.
 
   The game ends <t:{ends}:R> or whenever you say "stop the game".
 
-  Ready to go?
-hint_title: "Starting Hint"
-riddle_line: "{line}"
-photo_credit: "-# Photo by [{name}]({profile}) on [Unsplash]({home})"
-warning: "⏳ This round ends <t:{ends}:R>."
+  Ready? {intro}
+intro_quote: "Here's a quote to get you on your way..."
+intro_haiku: "Here's a haiku to get you on your way..."
+hint_line: "*{line}*" # each line of the quote or haiku
+quote_author: "— {author}"
+author_is_answer: "(author hidden)" # shown as the author when the author is the answer
 
-# Answers to questions and guesses are reactions on the player's message.
+# Answers are reactions on the player's message. A win also gets the win message.
 reactions:
+  win: "✔️"
   yes: "✔️"
   no: "❌"
   sort_of: "🌀"
-  close: "🔥" # added for near misses, and for "yes, but I'm something more specific"
 questions_left: "{left} questions left."
+time_left: "⏳ This round ends <t:{ends}:R>."
 last_question: "⚠️ That was the last question! The **next guess is final**, so talk it over first."
-guess_now: "No more questions. Make your final guess!"
 hint: "{hint}"
 
 win: "🎉 **{username}** got it! You found the answer with {used} of {max} questions."
@@ -54,10 +47,18 @@ lose: "💥 That was your final guess. Better luck next time!"
 timeout: "⏰ Time's up!"
 stopped: "🛑 Game stopped."
 
-# End-of-game card and stats
+# End-of-game card and stats, then the button to play again
+play_again_prompt: "Up for another round?"
+play_again: "Play again"
+play_again_starting: "🎲 **{username}** wants another round! Thinking of something…"
 card_loading: "Pulling up the info card…"
 reveal: "# {title}"
 read_more: "Read more"
+# YouTube videos (when YOUTUBE_API_KEY is set): trailers and songs go in the info card; a documentary is posted after it.
+video:
+  trailer: "🎬 Watch the trailer: [{title}]({url})"
+  song: "🎵 Listen on YouTube: [{title}]({url})"
+  documentary: "📺 Want to know more? Here's a documentary: [{title}]({url})"
 stats_title: "**Game stats**"
 stat_most_questions: "🙋 Most questions asked: **{username}** ({count})"
 stat_valuable: "💎 Most valuable question: **{username}**: {text}"
@@ -65,81 +66,75 @@ stat_closest: "🎯 Closest guess: **{username}**: {text}"
 stat_farthest: "🛰️ Farthest guess: **{username}**: {text}"
 stat_related: "🔗 Weirdly related guess: **{username}**: {text}"
 
-# Instructions for the AI. The article is always given to it separately.
+# Instructions for the AI. Kept short: the models know what 20 Questions is.
 prompts:
   screen: |
-    You screen topics for a family-friendly Discord party game where players guess a Wikipedia article with yes/no
-    questions. Judge the article above on two things.
-    - suitable: is it a suitable topic for players aged 13 and up, families and a party game? Unsuitable: sexual
-      content, graphic violence or gore, recent tragedies, crimes or criminals as the main subject, hate, drugs,
-      self-harm, or private individuals. History as it is taught in schools is fine even when it is dark (wars,
-      empires, disasters, historical figures).
-    - guessable: could an average English-speaking person with a K-12 education and general world knowledge guess it
-      within about 10 yes/no answers? Guessable: South Dakota, 1776, Alexander Hamilton, Dentist, Ocean liner, Venice,
-      Electric vehicle, Tesla Model X, Mars exploration. Not guessable: 2005 Sugar Bowl, a minor village, a
-      little-known athlete, a single episode, match or bill.
+    We're choosing the secret answer for a game of 20 Questions from these numbered Wikipedia topics.
+    Judge every topic, by its number:
+    - suitable: no unsavoury content, except what would be taught in K-12 school, shown in a museum or fine in a PG-13 film.
+    - guessable: it's something taught at school, something from pop culture, science or history, or something
+      encountered in day-to-day life. It can't simply be one of the 5,000 most common English words (like "Dog" or
+      "Water"), though its name may contain them (like "Black Panther" or "Great Wall of China").
   opening: |
-    Write the opening of a game of 20 Questions about the article above.
-    - poem: a haiku (three lines of 5, 7 and 5 syllables, separated by newlines) spoken by the subject in the
-      first person, followed by "Who am I?" on its own line. Give a real hint about what it is, but never name it,
-      never use words from its name, and avoid giveaways such as exact dates or unique places.
-      Example for electromagnetism: "I pull and I push,\nbut only when charged with spark,\ninvisible hands.\nWho am I?"
-    - topic: the broad theme it belongs to, 1 to 4 words, that doesn't give the answer away.
-      Examples: "World War 2" for the T-34 tank, "Physics" for electromagnetism, "Amphibians" for Frog.
-    - image_query: 2 to 4 words to search a stock photo site for an atmospheric photo of the broad topic. It must not
-      find the answer or the kind of thing the answer is: for the T-34 tank, search "world war 2 soldiers", not
-      "military vehicle"; for Frog, "pond at dawn", not "frog".
-  photo: |
-    We need a photo for the topic "{topic}" at the start of a family-friendly game of 20 Questions. The secret answer
-    is the article above, and the players must not be able to work it out from the photo.
-    Choose the best photo that: suits players aged 13 and up and families; clearly fits the topic; and does not show
-    or name the secret answer or the kind of thing it is (no tank in the photo if the answer is a tank).
-    Reply with its number, or 0 if none of them qualifies.
-  interpret: |
-    You are the game master of a co-op game of 20 Questions. The secret answer is the article above.
-    Players can't see the article. Classify the newest player message and answer it.
-
-    intent:
-    - "question": a yes/no question about the secret ("Is it alive?", "Was it built in Europe?").
-    - "guess": names a specific candidate for the secret ("Is it a frog?", "Titanic!", "the Eiffel Tower").
-    - "hint": plainly asks for a hint or clue.
-    - "stop": plainly asks to stop, end or quit the game.
-    - "chat": anything else (players talking to each other, reactions, jokes). These get no reply.
-
-    answer:
-    - For a question: "yes", "no", "sort_of" (partly true, depends, or true in a loose sense) or
-      "not_quite" (close to the truth but not exactly right). Answer truthfully from the article and common knowledge.
-    - For a guess: "yes" if it is the secret, including misspellings, alternative names and translations
-      ("Frogge" or "Frogg" for Frog). "not_quite" if it is closely related but not the same thing: a specific instance,
-      a sibling, a narrower category, or something that has the secret in its name
-      ("Pepe the Frog" for Frog, "Queen Mary 2" for Titanic). Otherwise "no".
-    - For a question or guess that names a broader kind of thing the secret is ("Are you a tank?" when the secret is
-      the Tiger I tank, "an animal" for Frog): "yes_more_specific".
-    - For hint, stop and chat: "none".
-    guess: for a guess, the candidate named, else "".
-  verify: |
-    A player in a game of 20 Questions guessed: "{guess}". The secret answer is the article above.
-    Is the guess the same thing as the article's subject? Accept misspellings, alternative names, translations and
-    common short forms. Answer "yes_more_specific" if the guess is a broader kind of thing the subject is,
-    "not_quite" if it is closely related but a different thing, otherwise "no".
+    The article above is the secret answer in a game of 20 Questions.
+    - topic: a very broad category in one or two words, like "Famous Streets", "Warfare" or "Medicine". Nothing
+      more specific, as that would be a strong hint.
+    - kind and hint: if it's at all quotable, kind "quote" and a famous quote by it or from it (people, books,
+      films, songs and languages are quotable; a language is quoted in that language), or else a quote about it that's
+      famous in history. Otherwise kind "haiku" and a three-line haiku spoken by the subject itself in the first
+      person. Just the quote or the haiku, never the answer's name or any part or form of it (pick another quote if
+      needed).
+    - author: who said or wrote the quote ("" for a haiku); authorIsAnswer: true if that author is the answer.
+    - answers: 10 to 20 short guesses that should win because they mean exactly the same thing: names, alternative
+      names, abbreviations, close synonyms, singular and plural. Never broader categories, related things or parts
+      (for Frog: not "amphibian", "toad" or "tadpole").
+  route: |
+    Sort the newest message from a Discord game of 20 Questions:
+    - ask: a question or a guess about the secret answer
+    - hint: asks for a hint
+    - stop: asks to stop or end the game
+    - chat: anything else
+    Use what just happened to understand short follow-ups: right after a hint, "another one" or "I need another"
+    asks for a hint.
+  route_input: |
+    What just happened:
+    {recent}
+    Newest message: "{message}"
+  # Lines about what just happened, for routing.
+  recent:
+    ask: '{username} asked "{text}" and got "{result}"'
+    hint: '{username} asked "{text}" and got a hint'
+    chat: '{username} said "{text}"'
+  # The game so far, given to Sonnet when judging a question and when writing a hint.
+  game: |
+    This is a game of 20 Questions with yes-or-no answers.
+    Secret answer: {title}
+    Winning answers (a guideline, not a complete list): {answers}
+    From its Wikipedia article:
+    {facts}
+    Questions so far:
+    {log}
+    Hints so far:
+    {hints}
+  judge: |
+    The player has asked a question or made a guess: "{question}"
+    Reply with one word:
+    - win: the guess names the secret answer in substance (ignore singular/plural and grammar mistakes; synonyms count)
+    - yes: the answer to the question is yes
+    - no: the answer to the question is no
+    - sort_of: it could be yes or no depending on the context
+    Pay close attention to how the question is phrased. A question that doesn't fit the secret answer is "no": if the
+    answer is Car, "Is it a Chinese car manufacturer?" is "no", because a car isn't a car manufacturer.
   hint: |
-    You are the game master of a co-op game of 20 Questions. The secret answer is the article above.
-    Below is everything the players have asked and guessed so far, and the hints already given.
-    Write one new hint that helps them take the next step from what they already know: one short, plain, factual
-    sentence in simple words, like "It's a college football game." or "It jumps very high for its size."
-    It must not be a riddle: no wordplay, puns, metaphors, puzzles or cryptic descriptions, and only one fact at a time.
-    Don't repeat what they've already worked out or what earlier hints said. Never name the secret or use words
-    from its name. Reply with only the hint.
+    Write one hint for the players: a short, simple, factual sentence that helps from what they've asked so far.
+    Not a riddle. Don't name the secret answer or repeat earlier hints.
   wrap_up: |
     A game of 20 Questions about the article above has ended ({outcome}). The game log is below.
-    1. infocard: a museum-style info card about the subject in Discord markdown: one plain sentence saying what it is,
-       then 3 or 4 short facts, each on its own line starting with a bold category label. Use different categories
-       that fit the subject, for example **Why it matters:**, **Fun fact:**, **History:**, **Science:**,
-       **Culture:**, **By the numbers:** or **Did you know?** Keep each fact to one or two sentences.
-       Don't repeat the title as a heading.
-    2. Pick from the log (use "" for username and text when there's no good candidate):
-       - most_valuable_question: the question that did most to narrow it down.
-       - closest_guess: the wrong guess that came closest.
-       - farthest_guess: the guess that was furthest off.
-       - related_guess: a wrong guess that is weirdly related to the answer, such as an actor from the film
-         when the answer is the film. Only pick one if it is genuinely related.
+    - infocard: a museum-style info card in Discord markdown: one sentence saying what it is, then 3 or 4 short
+      sections, each with a "## " heading (like "## Why it matters" or "## Fun fact") and one or two sentences.
+      Don't repeat the title.
+    - most_valuable_question, closest_guess, farthest_guess, related_guess (a wrong guess unusually related to the
+      answer, like an actor when the answer is their film): pick from the log, or "" for both fields if none fits.
+    - video: for a film or theatre play, kind "trailer" and a YouTube search for its official trailer; for a song,
+      kind "song" and a search for the song; otherwise, if a documentary about it likely exists on YouTube, kind
+      "documentary" and a search for one; else kind "none" and search "".
