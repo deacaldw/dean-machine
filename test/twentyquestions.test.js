@@ -13,12 +13,12 @@ const youtube = require(path.join(dir, 'youtube.js'));
 const realYoutubeSearch = youtube.search; // the other tests replace it with a fake
 // The skill's own strings, so rewording strings.yaml doesn't break the tests.
 const t = require(path.join(__dirname, '..', 'src', 'strings.js'))(dir);
-// "The category is X. Here's a haiku/quote..."
-const intro = (category, kind, again = false) => t('intro', { category: t(again ? 'category_next' : 'category_first', { category }), hint: t(kind) });
+// "Here are three fun facts...", or for Play again "Here's another one from X!..."
+const intro = (category, again = false) => (again ? t('intro_again', { category }) : t('intro'));
 
 const FROG = { title: 'Frog', url: 'https://en.wikipedia.org/wiki/Frog', image: 'https://img/frog.jpg', text: 'Frogs are amphibians...' };
 const PHOTOS = [1, 2, 3, 4, 5].map(n => `https://upload.wikimedia.org/frog${n}.jpg`);
-const POEM = 'Green skin, quiet pond,\nI leap on a lily pad,\nsinging after rain.';
+const FACTS = ['It has smooth, moist skin.', 'It starts life in water.', 'Some kinds can freeze solid in winter.'];
 const TOPICS = ['Frog', 'Rock', 'Newt']; // every tag finds these
 const WRAP = {
   infocard: 'Frogs are amphibians.\n## Fun fact\nSome frogs can freeze solid.',
@@ -34,16 +34,23 @@ const CLOSE_MS = 10 * 60 * 1000;
 // TOPICS), `misfits` fail the category check, and `stubs` have no usable article.
 let calls;
 function fakes({ routes = [], results = [], tags = ['Animals'], shortlist = ['Frog'], misfits = [], stubs = [] } = {}) {
-  calls = { judge: [], hint: 0, fetched: [], routed: [], categories: [], shortlists: [], fits: [] };
+  calls = { judge: [], scenic: [], recaps: 0, hint: 0, fetched: [], routed: [], categories: [], shortlists: [], fits: [] };
   wiki.tags = () => [...t.get('categories'), 'Animals'].sort();
   wiki.tagged = wanted => (wanted.length ? TOPICS.map(name => ({ name, title: name })) : []);
   ai.categories = async (category, all) => { calls.categories.push([category, all]); return tags; };
   ai.shortlist = async (category, names) => { calls.shortlists.push([category, [...names].sort()]); return shortlist.map(name => names.indexOf(name)); };
   ai.fits = async (category, article) => { calls.fits.push([category, article.title]); return !misfits.includes(article.title); };
-  ai.opening = async () => ({ kind: 'haiku', hint: POEM, answers: ['frogs', 'Anura'] });
+  ai.opening = async () => ({ facts: FACTS, answers: ['frogs', 'Anura'] });
   ai.route = async (message, recent) => { calls.routed.push([...(recent ?? [])]); return routes.shift(); };
-  ai.judge = async (game, question) => { calls.judge.push({ question, log: [...game.log], hints: [...game.hints] }); return results.shift(); };
+  // A result is a verdict ('yes'), or the whole JSON answer with awards ({ result: 'no', hot_stuff: true }).
+  ai.judge = async (game, question, scenic) => {
+    calls.judge.push({ question, log: game.log.map(({ at, ...e }) => e), hints: [...game.hints] });
+    calls.scenic.push(scenic);
+    const r = results.shift();
+    return { hot_stuff: false, breakthrough: false, ...(typeof r === 'string' ? { result: r } : r) };
+  };
   ai.hint = async () => { calls.hint++; return 'It lives near water.'; };
+  ai.recap = async () => { calls.recaps++; return { recap: "It's alive and lives near water.", questions: ['Is it green?', 'Can it fly?', 'Is it a mammal?'] }; };
   ai.wrapUp = async () => WRAP;
   youtube.search = async query => ({ title: `Video: ${query}`, url: `https://www.youtube.com/watch?v=${encodeURIComponent(query)}` });
   wiki.article = async title => { calls.fetched.push(title); return stubs.includes(title) ? null : { ...FROG, title }; }; // copies, so cached photos don't leak
@@ -85,26 +92,30 @@ function playAgainClick(th) {
 // A game in progress in thread t1, and a way for players to post in it.
 function game(extra) {
   const th = thread();
-  const data = { guildId: 'g1', channelId: 'c1', threadId: 't1', category: 'Animals', shortlist: ['Newt'], article: FROG, answers: ['Frog', 'frogs'], endsAt: Date.now() + 1200000, warned: [], used: 0, log: [], recent: [], hints: [], over: false, closesAt: null, ...extra };
+  const data = { guildId: 'g1', channelId: 'c1', threadId: 't1', category: 'Animals', shortlist: ['Newt'], article: FROG, answers: ['Frog', 'frogs'], startedAt: Date.now() - 60000, lastAt: null, awards: {}, endsAt: Date.now() + 1200000, warned: [], used: 0, log: [], recent: [], hints: [], over: false, closesAt: null, ...extra };
   const jobs = [{ id: 'j0', data }];
   return { th, data, jobs, ctx: ctx(jobs) };
 }
 
-async function say(g, content, username = 'Dean') {
+async function say(g, content, username = 'Dean', at = Date.now()) {
   const out = [];
   const message = {
-    guildId: 'g1', channelId: g.data?.threadId ?? 't1', content, author: { username, bot: false }, member: { displayName: username }, channel: g.th,
-    reply: async x => out.push(x.content),
+    guildId: 'g1', channelId: g.data?.threadId ?? 't1', content, createdTimestamp: at, author: { username, bot: false }, member: { displayName: username }, channel: g.th,
+    reply: async x => {
+      out.push(x.content);
+      g.replies = [...(g.replies ?? []), x];
+    },
     react: async emoji => out.push(`react:${emoji}`),
   };
   await skill.message(message, g.ctx);
   return out;
 }
 
-// The starting hint box: each line in italics, then the quote's author if any.
-const box = (...lines) => ({ color: 0x3366cc, description: lines.join('\n') });
-const italic = text => text.split('\n').map(line => t('hint_line', { line })).join('\n');
-const react = key => `react:${t(`reactions.${key}`)}`; // win and yes share an emoji
+// A box with the awards a player earned.
+const award = (username, ...keys) => ({ color: 0xf1c40f, description: keys.map(key => t('award', { username, ...t.get(`awards.${key}`) })).join('\n') });
+
+// The box with the fun facts.
+const factsBox = facts => ({ color: 0x3366cc, description: facts.map(fact => t('fact', { fact })).join('\n') });
 const text = th => th.sent.map(m => (typeof m === 'string' ? m : m.content)).join('\n');
 const quiet = async fn => { const error = console.error; console.error = () => {}; try { return await fn(); } finally { console.error = error; } };
 
@@ -123,8 +134,8 @@ test('/20questions with a category finds tags, then a shortlist, and opens a thr
   assert.equal(th.sent.length, 1, 'just the opening message');
   const [opening] = th.sent;
   const { data } = jobs[0];
-  assert.equal(opening.content, t('rules', { questions: 20, ends: Math.floor(data.endsAt / 1000), intro: intro('amphibians', 'intro_haiku'), ...t.get('reactions') }));
-  assert.deepEqual(opening.embeds, [box(italic(POEM))]);
+  assert.equal(opening.content, t('rules', { category: 'amphibians', questions: 20, ends: Math.floor(data.endsAt / 1000), intro: intro('amphibians') }));
+  assert.deepEqual(opening.embeds, [factsBox(FACTS)], 'three fun facts as the starting hint');
   assert.doesNotMatch(JSON.stringify(th.sent), /Frog|Newt/, 'the answer never appears in the thread');
 
   assert.equal(jobs.length, 1, 'one job for the thread');
@@ -133,6 +144,7 @@ test('/20questions with a category finds tags, then a shortlist, and opens a thr
   assert.deepEqual([...data.shortlist, data.article.title].sort(), ['Frog', 'Newt'], 'the played topic is taken off the list');
   assert.deepEqual(data.article.photos, PHOTOS, 'the article and its photos are cached in the game');
   assert.deepEqual(data.answers, [data.article.title, 'frogs', 'Anura']);
+  assert.deepEqual(data.hints, FACTS, 'the facts count as hints, so later hints do not repeat them');
   assert.ok(Math.abs(data.endsAt - Date.now() - 1200000) < 2000);
   assert.equal(data.over, false);
 });
@@ -168,38 +180,17 @@ test('a category with nothing that fits says so', async () => {
   }
 });
 
-test('a haiku written on one line with " / " is split into lines', async () => {
-  fakes();
-  ai.opening = async () => ({ kind: 'haiku', hint: 'Fragrant blossoms / I swell from berries / I fill your glass', answers: [] });
-  const { th } = await startGame({ category: 'amphibians' });
-  assert.deepEqual(th.sent[0].embeds, [box(italic('Fragrant blossoms\nI swell from berries\nI fill your glass'))]);
-});
-
-test('a starting hint that gives away part of the title is written again', async () => {
+test('fun facts that give away part of the title are written again', async () => {
   assert.ok(skill.leaksTitle('my last, my farewell, my road', 'Abbey Road'));
   assert.ok(!skill.leaksTitle('Call me Ishmael.', 'Moby-Dick'));
   assert.ok(!skill.leaksTitle('I sailed the sea', 'War of 1812'), 'short words like "war" are ignored');
 
   fakes();
-  const hints = ['my farewell, my road', 'four figures cross the stripes'];
-  ai.opening = async () => ({ kind: 'haiku', hint: hints.shift(), answers: [] });
+  const facts = [['It was recorded on a famous road.', 'It came out in 1969.', 'Its cover shows a zebra crossing.'], ['It came out in 1969.', 'Its cover shows four people crossing a street.', 'It was the last album its band recorded.']];
+  ai.opening = async () => ({ facts: facts.shift(), answers: [] });
   wiki.article = async () => ({ ...FROG, title: 'Abbey Road' });
   const { th } = await startGame({ category: 'amphibians' });
-  assert.deepEqual(th.sent[0].embeds, [box(italic('four figures cross the stripes'))]);
-});
-
-test('a quotable topic gets a quote with its author, hidden when the author is the answer', async () => {
-  fakes();
-  ai.opening = async () => ({ kind: 'quote', hint: '"I think, therefore I am."', author: 'René Descartes', authorIsAnswer: false, answers: [] });
-  let { th } = await startGame({ category: 'amphibians' });
-  assert.deepEqual(th.sent[0].embeds, [box(italic('"I think, therefore I am."'), t('quote_author', { author: 'René Descartes' }))]);
-  assert.ok(th.sent[0].content.includes(intro('amphibians', 'intro_quote')));
-
-  fakes();
-  ai.opening = async () => ({ kind: 'quote', hint: '"I think, therefore I am."', author: 'René Descartes', authorIsAnswer: true, answers: [] });
-  ({ th } = await startGame({ category: 'amphibians' }));
-  assert.ok(th.sent[0].embeds[0].description.includes(t('quote_author', { author: t('author_is_answer') })));
-  assert.doesNotMatch(th.sent[0].embeds[0].description, /Descartes/);
+  assert.deepEqual(th.sent[0].embeds, [factsBox(['It came out in 1969.', 'Its cover shows four people crossing a street.', 'It was the last album its band recorded.'])]);
 });
 
 test('/20questions refuses in threads, while a game runs on the server, and reports failures', async () => {
@@ -253,7 +244,7 @@ test('Play again picks another topic from the same list, in the same thread, wit
   assert.equal(data.over, false);
   assert.equal(data.closesAt, null, 'the thread stays open');
   assert.equal(data.used, 0, 'a fresh round');
-  assert.deepEqual(th.sent.at(-1), { content: intro('amphibians', 'intro_haiku', true), embeds: [box(italic(POEM))] }, 'just the intro and the hint, no rules');
+  assert.deepEqual(th.sent.at(-1), { content: intro('amphibians', true), embeds: [factsBox(FACTS)] }, 'just the intro and the facts, no rules');
 
   // A second click while that game runs is refused, like the command.
   const again = playAgainClick(th);
@@ -310,13 +301,13 @@ test('a Play again being set up can be stopped by saying so', async () => {
 
 // --- Playing ---
 
-test('questions get a verdict from Sonnet, answered with reactions', async () => {
+test('questions get a verdict from Sonnet, answered with a short reply after a typing indicator', async () => {
   const g = game({ hints: ['It lives near water.'] });
   fakes({ routes: ['ask', 'ask', 'ask'], results: ['yes', 'no', 'sort_of'] });
-  assert.deepEqual(await say(g, 'Is it an animal?'), [react('yes')]);
-  assert.deepEqual(await say(g, 'Is it a mammal?'), [react('no')]);
-  assert.deepEqual(await say(g, 'Does it live in water?', 'Ana'), [react('sort_of')]);
-  assert.equal(g.th.typing, 0, 'no typing indicator for reactions');
+  assert.deepEqual(await say(g, 'Is it an animal?'), [t('answers.yes')]);
+  assert.deepEqual(await say(g, 'Is it a mammal?'), [t('answers.no')]);
+  assert.deepEqual(await say(g, 'Does it live in water?', 'Ana'), [t('answers.sort_of')]);
+  assert.equal(g.th.typing, 3, 'typing shows at once for every message');
 
   assert.deepEqual(calls.judge[1], {
     question: 'Is it a mammal?',
@@ -326,7 +317,7 @@ test('questions get a verdict from Sonnet, answered with reactions', async () =>
   assert.equal(g.data.used, 3);
 });
 
-test('chat is ignored; hints are free', async () => {
+test('chat is ignored without a typing indicator; hints use up a question', async () => {
   const g = game({ log: [{ username: 'Dean', text: 'Is it alive?', result: 'yes' }], used: 1 });
   fakes({ routes: ['chat', 'hint'] });
   assert.deepEqual(await say(g, 'lol good one', 'Ana'), []);
@@ -334,9 +325,9 @@ test('chat is ignored; hints are free', async () => {
 
   assert.deepEqual(await say(g, 'hint please'), [t('hint', { hint: 'It lives near water.' })]);
   assert.equal(calls.hint, 1);
-  assert.equal(g.th.typing, 1, 'typing while the hint is written');
+  assert.equal(g.th.typing, 1, 'typing for the hint only');
   assert.deepEqual(g.data.hints, ['It lives near water.']);
-  assert.equal(g.data.used, 1);
+  assert.equal(g.data.used, 2);
 });
 
 test('the router knows what just happened, so "I need another" after a hint makes sense', async () => {
@@ -354,27 +345,23 @@ test('the router knows what just happened, so "I need another" after a hint make
   assert.equal(calls.hint, 2);
 });
 
-test('a win ends the game with the info card and all stats', async () => {
+test('a win ends the game with the winner\'s awards and the info card', async () => {
   const g = game({ log: [{ username: 'Ana', text: 'Toad?', result: 'no' }], used: 1 });
   fakes({ routes: ['ask'], results: ['win'] });
-  assert.deepEqual(await say(g, 'is it a frog'), [react('win')]);
+  assert.deepEqual(await say(g, 'is it a frog'), [], 'the win message is the answer');
   assert.equal(g.data.over, true);
 
   const out = text(g.th);
-  const order = [t('win', { username: 'Dean', used: 2, max: 20 }), t('card_loading'), t('reveal', { title: 'Frog' })].map(x => out.indexOf(x));
+  const order = [t('win', { username: 'Dean', used: 2, max: 20 }), t('card_loading_won'), t('reveal', { title: 'Frog' })].map(x => out.indexOf(x));
   assert.ok(order.every((at, k) => at >= 0 && (k === 0 || at > order[k - 1])), 'result, loading line, then the answer');
-  assert.equal(g.th.typing, 1, 'typing while the info card is written');
+  assert.equal(g.th.typing, 2, 'typing for the guess, then while the info card is written');
 
-  const card = g.th.sent.find(m => m.embeds);
+  assert.deepEqual(g.th.sent[0].embeds, [award('Dean', 'first_try')], 'Dean guessed it with their first question');
+  const card = g.th.sent.find(m => m.content === t('reveal', { title: 'Frog' }));
   assert.equal(card.embeds[0].description, `${WRAP.infocard}\n\n[${t('read_more')}](${FROG.url})`);
   assert.deepEqual(card.embeds[0].image, { url: FROG.image });
   assert.deepEqual(g.th.sent.at(-1).components[0].components[0].custom_id, 'TwentyQuestions:again', 'ends with a Play again button');
-  assert.equal(g.th.sent.at(-2), [
-    t('stats_title'),
-    t('stat_most_questions', { username: 'Ana', count: 1 }),
-    t('stat_valuable', { username: 'Dean', text: 'Is it an animal?' }),
-    t('stat_closest', { username: 'Ana', text: 'Toad' }),
-  ].join('\n'), 'stats without a candidate are left out');
+  assert.ok(!g.th.sent.some(m => typeof m === 'string' && m.includes('**Game stats**')), 'no stats any more');
 });
 
 test('the info card shows up to 5 article photos: a gallery of 4 and a thumbnail', async () => {
@@ -445,20 +432,119 @@ test('YouTube titles are made safe for a [title](url) link', () => {
   assert.equal(youtube.plainTitle('Rock &amp; Roll [Official Video] &#39;Live&#39;'), "Rock & Roll Official Video 'Live'");
 });
 
-test('reminders at 15, 10 and 5 questions left; after 20, one final guess', async () => {
-  const g = game({ used: 4 });
-  fakes({ routes: Array(17).fill('ask'), results: Array(17).fill('no') });
-  for (let i = 0; i < 16; i++) await say(g, 'Is it big?');
-  assert.deepEqual(g.th.sent, [
-    t('questions_left', { left: 15 }),
-    t('questions_left', { left: 10 }),
-    t('questions_left', { left: 5 }),
-    t('last_question'),
-  ]);
-  assert.equal(g.data.over, false);
+test('a question that cannot be answered yes or no gets told so, and does not use up a question', async () => {
+  const g = game();
+  fakes({ routes: ['ask'], results: ['not_yes_no'] });
+  assert.deepEqual(await say(g, 'What colour is it?'), [t('not_yes_no')]);
+  assert.equal(g.data.used, 0);
+  assert.deepEqual(g.data.log, []);
+});
 
-  await say(g, 'Is it a newt?');
-  assert.ok(text(g.th).includes(t('lose')));
+test('hints say how many questions are left, and the last one starts the final poll', async () => {
+  const g = game({ used: 4 });
+  fakes({ routes: ['hint'] });
+  assert.deepEqual(await say(g, 'hint please'), [`${t('hint', { hint: 'It lives near water.' })} ${t('questions_left', { left: 15 })}`]);
+});
+
+// An earlier question by someone else, so the next one isn't the round's first (Ice Breaker).
+const warm = extra => game({ log: [{ username: 'Zed', text: 'Is it big?', result: 'sort_of', at: 0 }], used: 1, ...extra });
+
+test('awards from the log come with the answer: Ice Breaker, Trailblazer, Take a Hint, Comeback Kid', async () => {
+  let g = game();
+  fakes({ routes: Array(5).fill('ask'), results: ['yes', 'yes', 'yes', 'yes', 'yes'] });
+  for (let i = 0; i < 4; i++) await say(g, 'Is it alive?', 'Ana');
+  assert.deepEqual(g.replies.map(r => r.embeds), [[award('Ana', 'ice_breaker')], [], [], [award('Ana', 'trailblazer')]], 'the first question, then four yeses in a row');
+  await say(g, 'Is it green?', 'Ana');
+  assert.deepEqual(g.replies.at(-1).embeds, [], 'once per round');
+
+  g = warm();
+  fakes({ routes: Array(5).fill('ask'), results: Array(5).fill('no') });
+  for (let i = 0; i < 4; i++) await say(g, 'Is it red?', i === 2 ? 'Ben' : 'Ana');
+  assert.deepEqual(g.replies.map(r => r.embeds), [[], [], [], []], 'another player in between: only three of Ana\'s in a row');
+  await say(g, 'Is it blue?', 'Ana');
+  assert.deepEqual(g.replies.at(-1).embeds, [award('Ana', 'take_a_hint')], 'four noes in a row');
+
+  g = warm();
+  fakes({ routes: Array(3).fill('ask'), results: ['no', 'no', 'yes'] });
+  await say(g, 'Is it red?', 'Ana');
+  await say(g, 'Is it blue?', 'Ben');
+  await say(g, 'Is it alive?', 'Cat');
+  assert.deepEqual(g.replies.at(-1).embeds, [award('Cat', 'comeback_kid')], 'a yes after the team got two noes in a row');
+});
+
+test('Team Player needs the latest yes to be someone else\'s', async () => {
+  const g = warm();
+  fakes({ routes: ['ask', 'ask', 'ask'], results: [{ result: 'yes' }, { result: 'yes', team_player: true }, { result: 'yes', team_player: true }] });
+  await say(g, 'Is it alive?', 'Ana');
+  await say(g, 'Is it an animal?', 'Ana');
+  assert.ok(!JSON.stringify(g.replies[1].embeds).includes(t('awards.team_player.name')), 'building on her own yes');
+  await say(g, 'Does it live in water?', 'Ben');
+  assert.deepEqual(g.replies[2].embeds, [award('Ben', 'team_player')], "building on Ana's yes");
+});
+
+test('awards from the timing: Final Boss, Lead not Read, Sleep on It, The 11th Hour', async () => {
+  let g = warm({ used: 11 });
+  fakes({ routes: ['ask'], results: ['yes'] });
+  await say(g, 'Is it alive?', 'Cat');
+  assert.deepEqual(g.replies[0].embeds, [award('Cat', 'final_boss')], 'first question in the second half, a yes');
+
+  g = warm();
+  fakes({ routes: ['ask', 'ask'], results: ['sort_of', 'sort_of'] });
+  const started = g.data.startedAt;
+  await say(g, 'Is it big?', 'Dan', started + 1500);
+  assert.deepEqual(g.replies[0].embeds, [award('Dan', 'lead_not_read')], 'within 2 seconds of the start');
+  await say(g, 'Is it small?', 'Eve', started + 1500 + 2 * 60 * 1000);
+  assert.deepEqual(g.replies[1].embeds, [award('Eve', 'sleep_on_it')], 'two minutes after the last question');
+
+  for (const extra of [{ endsAt: Date.now() + 30 * 1000 }, { used: 19 }]) {
+    g = warm({ ...extra, log: [{ username: 'Dan', text: 'Is it big?', result: 'sort_of', at: 0 }] });
+    fakes({ routes: ['ask'], results: ['win'] });
+    await say(g, 'Is it a frog?', 'Dan');
+    assert.ok(g.th.sent[0].embeds[0].description.includes(t('awards.eleventh_hour.name')), JSON.stringify(extra));
+  }
+});
+
+test('Sonnet judges Hot Stuff, Breakthrough, Team Player and Scenic Route with the answer', async () => {
+  const g = game({ used: 8 });
+  fakes({
+    routes: ['ask', 'ask', 'ask', 'ask'],
+    results: [{ result: 'no', hot_stuff: true }, { result: 'yes', scenic_route: true, team_player: true }, { result: 'yes', breakthrough: true, team_player: true }, { result: 'win', hot_stuff: true, breakthrough: true }],
+  });
+  assert.deepEqual(await say(g, 'Is it a toad?', 'Ana'), [t('answers.no')]);
+  assert.deepEqual(g.replies[0].embeds, [award('Ana', 'hot_stuff', 'ice_breaker')], 'in the box with the answer');
+  await say(g, 'Do you like jazz?', 'Ben');
+  assert.deepEqual(g.replies[1].embeds, [award('Ben', 'scenic_route')], 'no Team Player: there was no yes to build on');
+  assert.deepEqual(calls.scenic, [false, true], 'Scenic Route is only judged after 9 questions and hints');
+
+  await say(g, 'Is it an amphibian?', 'Ana');
+  assert.deepEqual(g.replies[2].embeds, [award('Ana', 'breakthrough', 'team_player')], "Team Player: building on Ben's yes");
+  await say(g, 'Is it a frog?', 'Ben');
+  assert.equal(g.th.sent[0].embeds, undefined, 'a winning guess earns no judged awards');
+});
+
+test('reminders at 15, 10 and 5 questions left; after the last question, a final poll', async ctxt => {
+  ctxt.mock.timers.enable({ apis: ['setTimeout'] });
+  const g = game({ used: 4 });
+  fakes({ routes: Array(16).fill('ask'), results: Array(16).fill('no') });
+  ai.options = async () => ({ answer: 'Frog', decoys: ['Toad', 'Newt', 'Salamander'] });
+  const replies = [];
+  for (let i = 0; i < 15; i++) replies.push(...await say(g, 'Is it big?'));
+  const no = t('answers.no');
+  assert.deepEqual(replies.filter(r => r !== no), [15, 10, 5].map(left => `${no} ${t('questions_left', { left })}`));
+  assert.equal(g.data.used, 19);
+
+  const flush = async () => { for (let k = 0; k < 10; k++) await new Promise(r => setImmediate(r)); };
+  const last = say(g, 'Is it small?');
+  await flush();
+  assert.equal(g.th.sent.at(-1), t('out_of_questions'));
+  assert.ok(!g.th.sent.some(m => m?.poll), 'a pause before the poll');
+  ctxt.mock.timers.tick(5000);
+  await flush();
+  assert.ok(g.th.sent.some(m => m?.poll), 'then the poll');
+  g.th.votes = { Frog: 1 };
+  ctxt.mock.timers.tick(25 * 1000);
+  await last;
+  assert.ok(text(g.th).includes(t('options_win', { picked: 'Frog' })));
   assert.equal(g.data.over, true);
 });
 
@@ -473,7 +559,7 @@ test('if answering fails, the player is asked to try again', async () => {
   assert.equal(g.data.used, 0, 'a failed question is not counted');
 });
 
-// Asks for options, lets the 10-second poll run out, and returns the poll message.
+// Asks for options, lets the 25-second poll run out, and returns the poll message.
 async function optionsPoll(ctxt, g, votes, during = async () => {}) {
   ctxt.mock.timers.enable({ apis: ['setTimeout'] });
   ai.options = async () => ({ answer: 'Frog', decoys: ['Toad', 'Newt', 'Salamander'] });
@@ -481,12 +567,12 @@ async function optionsPoll(ctxt, g, votes, during = async () => {}) {
   const asked = say(g, 'Give us some options');
   for (let i = 0; i < 10; i++) await new Promise(r => setImmediate(r));
   await during();
-  ctxt.mock.timers.tick(10 * 1000);
+  ctxt.mock.timers.tick(25 * 1000);
   await asked;
   return g.th.sent.find(m => m?.poll);
 }
 
-test('asking for options shows a 10-second poll; the most votes for the right one wins', async ctxt => {
+test('asking for options shows a 25-second poll; the most votes for the right one wins', async ctxt => {
   const g = game();
   fakes({ routes: ['options'] });
   const started = Date.now();
@@ -496,9 +582,10 @@ test('asking for options shows a 10-second poll; the most votes for the right on
   assert.deepEqual(poll.poll.answers.map(a => a.text).sort(), ['Frog', 'Newt', 'Salamander', 'Toad']);
   const closes = g.th.sent[g.th.sent.indexOf(poll) - 1];
   assert.match(closes, /<t:(\d+):R>/, 'a message says when the poll closes');
-  assert.ok(Math.abs(Number(closes.match(/<t:(\d+):R>/)[1]) - (started / 1000 + 10)) <= 2);
+  assert.ok(Math.abs(Number(closes.match(/<t:(\d+):R>/)[1]) - (started / 1000 + 25)) <= 2);
   assert.ok(g.th.pollEnded, 'the poll is closed');
   assert.ok(text(g.th).includes(t('options_win', { picked: 'Frog' })));
+  assert.ok(text(g.th).includes(t('card_loading_won')) && !text(g.th).includes(t('card_loading')), 'the answer is known');
   assert.ok(text(g.th).includes(t('reveal', { title: 'Frog' })), 'then the end flow continues');
   assert.equal(g.data.over, true);
 });
@@ -550,9 +637,49 @@ test('messages in a thread whose game is over are ignored', async () => {
 
 // --- Timer ---
 
+test('after 60 seconds without a question, a recap and three questions to try, once per quiet spell', async () => {
+  fakes({ routes: ['ask'], results: ['no'] });
+  const g = game({ threadId: 'quiet', startedAt: Date.now() - 61 * 1000 });
+  const client = { channels: { fetch: async () => g.th } };
+  const settle = () => new Promise(r => setImmediate(r));
+  await skill.run(g.data, client);
+  await settle();
+  assert.equal(g.th.sent.length, 1);
+  assert.equal(g.th.sent[0], t('nudge', {
+    recap: "It's alive and lives near water.",
+    questions: ['Is it green?', 'Can it fly?', 'Is it a mammal?'].map(question => t('nudge_question', { question })).join('\n'),
+  }));
+  assert.ok(g.th.typing >= 1, 'typing while the recap is written');
+
+  await skill.run(g.data, client);
+  await settle();
+  assert.equal(calls.recaps, 1, 'once per quiet spell');
+
+  await say(g, 'Is it big?', 'Ana', Date.now() - 65 * 1000); // a question starts a new quiet spell
+  await skill.run(g.data, client);
+  await settle();
+  assert.equal(calls.recaps, 2);
+
+  // A message while the recap is being written (even chat) means it isn't posted.
+  const posted = g.th.sent.length;
+  g.data.startedAt = g.data.lastAt = Date.now() - 70 * 1000; // a new quiet spell
+  let writing;
+  ai.recap = () => new Promise(resolve => { writing = resolve; });
+  await skill.run(g.data, client);
+  await say(g, 'hmm no idea', 'Ben');
+  writing({ recap: 'x', questions: ['a?', 'b?', 'c?'] });
+  await settle();
+  assert.equal(g.th.sent.length, posted, 'dropped');
+
+  const busy = game({ threadId: 'busy', startedAt: Date.now() - 45 * 1000 });
+  await skill.run(busy.data, { channels: { fetch: async () => busy.th } });
+  await settle();
+  assert.equal(calls.recaps, 2, 'not before 60 seconds');
+});
+
 test('time reminders at 15, 10, 5 and 1 minutes left, once each', async () => {
   fakes();
-  const g = game({ threadId: 'countdown' });
+  const g = game({ threadId: 'countdown', startedAt: Date.now() });
   const client = { channels: { fetch: async () => g.th } };
   const at = async minutesLeft => {
     g.data.endsAt = Date.now() + minutesLeft * 60000;

@@ -2,21 +2,9 @@
 # Placeholders in {braces} are filled in by the bot.
 
 command: "20questions"
-description: "Start a co-op game of 20 Questions"
-
-already_running: "A game is already running on this server: {link}\nPlease wait until it's over."
-not_here: "Start the game in a normal text channel, not in a thread."
-start_failed: "Sorry, I couldn't start a game right now. Please try again in a minute."
-start_cancelled: "🛑 Game cancelled."
+description: "Start a game of 20 Questions for everyone to play together"
 category_option: "category"
-category_description: "What the answer should be about, in your own words (like \"80s movies\" or \"animals\")"
-picking: "🤔 Thinking of something about **{category}**…"
-category_none: "Sorry, I couldn't find anything about **{category}**. Try something broader, or play without a category."
-category_used_up: "That's every topic I had about **{category}**! Use /20questions to start a new game."
-thread_closed: "This game is over. Use /20questions to start a new one."
-answer_failed: "Sorry, I couldn't answer that just now. Please try again."
-started: "🎯 **{username}** started a game of **20 Questions** about **{category}**! Join the thread below."
-thread_name: "20 Questions: {category}"
+category_description: "What it should be about, in your own words (like \"80s movies\" or \"animals\")"
 
 # Without a category, a game picks one of these at random. Each must be a tag from good_articles.json.
 categories:
@@ -41,69 +29,150 @@ categories:
   - Comics & superheroes
   - Writers & poets
 
-# The opening: the rules (only in a new thread), then the starting hint - a famous quote or a haiku - in a box.
+# --- Starting a game ---
+
+picking: "🤔 Thinking of something…"
+started: "🎯 **{username}** started a game of **20 Questions** about **{category}**! Join in below."
+thread_name: "20 Questions: {category}"
+already_running: "There's already a game going on this server: {link}\nJoin in, or wait until it's over."
+not_here: "Start a game in a regular channel, not in a thread."
+start_failed: "Sorry, I couldn't start a game just now. Please try again in a minute."
+start_cancelled: "🛑 Game cancelled."
+category_none: "I couldn't find anything for **{category}**. Try something broader, or leave the category out for a random one."
+category_used_up: "That's every topic I had for **{category}**! Use /20questions to start a new game."
+thread_closed: "This game has finished. Use /20questions to start a new one."
+
+# The first message in a new thread, ending with the intro to the fun facts (shown in a box below it).
 rules: |
-  I'm thinking of a person, thing, event or an idea - guess what it is!
+  I'm thinking of something from **{category}**. Can you work out what it is?
 
-  Ask me questions and I'll answer **yes** {yes}, **no** {no}, or **sort of** {sort_of}. When you're ready, make a guess, or ask for a hint if you're stuck. You only have {questions} questions, but hints are free.
+  - Ask me yes-or-no questions. You have {questions}.
+  - Stuck? Ask for a hint, but each one uses up a question.
+  - Think you know? Make a guess, or ask me for four options to vote on.
+  - Earn awards along the way for great (and not so great) questions.
+  - Time runs out <t:{ends}:R>. Say "stop the game" to end it early.
 
-  The game ends <t:{ends}:R> or whenever you say "stop the game".
+  {intro}
+intro: "Here are three fun facts to get you started:"
+intro_again: "Here's another one from **{category}**! Three fun facts to get you started:" # Play again
+fact: "• {fact}"
 
-  Ready? {intro}
-# The intro names the category, then the kind of hint.
-intro: "{category} {hint}"
-category_first: "The category is **{category}**."
-category_next: "Another one from **{category}**!" # Play again
-intro_quote: "Here's a quote to get you on your way..."
-intro_haiku: "Here's a haiku to get you on your way..."
-hint_line: "*{line}*" # each line of the quote or haiku
-quote_author: "— {author}"
-author_is_answer: "(author hidden)" # shown as the author when the author is the answer
+# --- Playing ---
 
-# Answers are reactions on the player's message. A win also gets the win message.
-reactions:
-  win: "✔️"
-  yes: "✔️"
-  no: "❌"
-  sort_of: "🌀"
-questions_left: "{left} questions left."
-time_left: "⏳ This round ends <t:{ends}:R>."
-last_question: "⚠️ That was the last question! The **next guess is final**, so talk it over first."
-hint: "{hint}"
+# Replies to questions. A right guess gets the win message instead.
+answers:
+  yes: "✔️ Yes!"
+  no: "❌ No."
+  sort_of: "🌀 Sort of."
+not_yes_no: "🤔 I can only answer yes or no. Try asking it another way!" # doesn't use up a question
+questions_left: "({left} questions left)" # added to an answer or a hint at 15, 10 and 5 questions left
+hint: "💡 {hint}"
 
-win: "🎉 **{username}** got it! You found the answer with {used} of {max} questions."
-lose: "💥 That was your final guess. Better luck next time!"
-timeout: "⏰ Time's up!"
-options_win: "🎉 The poll picked **{picked}**. That's right!"
-options_lose: "💥 The poll picked **{picked}**. That's not it - better luck next time!" # a tie shows "A or B"
-options_no_votes: "💥 Nobody voted, so the game is over. Better luck next time!"
+# Awards, shown in a box under the answer that earned them. Each player can earn each one once per round.
+award: "**{username}** earned **{name}**\n-# {about}"
+awards:
+  hot_stuff:
+    name: "🔥 Hot Stuff"
+    about: "Make a guess or ask a question very close to the answer."
+  breakthrough:
+    name: "💥 Breakthrough"
+    about: "Ask a question that narrows it down a lot."
+  trailblazer:
+    name: "🧭 Trailblazer"
+    about: "Ask four questions in a row that get a yes."
+  first_try:
+    name: "🎯 First Try"
+    about: "Guess the answer with your very first question."
+  scenic_route:
+    name: "🏞️ Scenic Route"
+    about: "Ask a wildly unrelated question, 10 or more questions in."
+  sleep_on_it:
+    name: "😴 Sleep on It"
+    about: "Take a good long think before asking the question."
+  take_a_hint:
+    name: "🙈 Take a Hint"
+    about: "Ask four questions in a row that get a no. Maybe it's time for a hint?"
+  lead_not_read:
+    name: "⚡ I'm Here to Lead, Not to Read"
+    about: "Ask a question within 2 seconds of a new game starting."
+  final_boss:
+    name: "👑 Final Boss"
+    about: "Ask your first question in the second half of the game, and get a yes."
+  ice_breaker:
+    name: "🧊 Ice Breaker"
+    about: "Ask the first question of the round."
+  comeback_kid:
+    name: "🔄 Comeback Kid"
+    about: "Get a yes right after the team got two noes in a row."
+  eleventh_hour:
+    name: "🕚 The 11th Hour"
+    about: "Find the answer with under a minute left, or with the very last question."
+  team_player:
+    name: "🤝 Team Player"
+    about: "Ask a question that builds on a yes someone else got."
 
-# Options: a poll with four choices; the one with the most votes is the final answer.
+# When nobody has asked anything for a while: what the players know so far, and some questions to try.
+nudge: |
+  🧠 **Here's what we know so far:** {recap}
+  Not sure what to ask? Try one of these:
+  {questions}
+nudge_question: "• {question}"
+
+# Headings the info card picks 3 from (plus 1 of its own for the topic).
+infocard_headings:
+  - Why It Matters
+  - Behind the Scenes
+  - Fun Fact
+  - Origin Story
+  - By the Numbers
+  - Common Misconception
+  - Legacy
+  - In Pop Culture
+  - Record Breaker
+  - Then and Now
+  - Hidden Detail
+  - What's in a Name
+  - Who's Behind It
+  - Around the World
+  - In Their Own Words
+  - What Came Next
+  - Odd Connection
+  - Close Relatives
+  - Bumps in the Road
+  - Try It Yourself
+time_left: "⏳ Time runs out <t:{ends}:R>."
+answer_failed: "Sorry, I couldn't answer that just now. Please try again."
+
+# Four options to vote on: when asked for, or after the last question. The most votes is the final answer.
+out_of_questions: "That was your last question! Now you'll have to pick the answer. Get ready…"
+options_closes: "🗳️ Time to vote! The poll closes <t:{ends}:R>, and the most votes wins."
 options_question: "Which one is it?"
-options_closes: "🗳️ Pick one! The poll closes <t:{ends}:R>, and the option with the most votes is your final answer."
 options_or: " or " # joins tied options
+
+# --- Ending ---
+
+win: "🎉 **{username}** got it, with {used} of {max} questions!"
+options_win: "🎉 You picked **{picked}**. That's right!"
+options_lose: "💥 You picked **{picked}**, but that's not it." # a tie shows "A or B"
+options_no_votes: "💥 Nobody voted, so that's the end of this round."
+timeout: "⏰ Time's up!"
 stopped: "🛑 Game stopped."
 
-# End-of-game card and stats, then the button to play again
-play_again_prompt: "Up for another round? Otherwise this thread closes <t:{closes}:R>."
-play_again: "Play again"
-play_again_starting: "🎲 **{username}** wants another round! Thinking of something…"
-card_loading: "Pulling up the info card…"
+# The answer with an info card, then the button to play again.
+card_loading: "Let's see what it was…"
+card_loading_won: "Here's more about it…" # when the players found the answer
 reveal: "# {title}"
 read_more: "Read more"
-# YouTube videos (when YOUTUBE_API_KEY is set): trailers and songs go in the info card; a documentary is posted after it.
+# YouTube videos (when YOUTUBE_API_KEY is set): trailers and songs go in the info card; a documentary comes after it.
 video:
   trailer: "🎬 Watch the trailer: [{title}]({url})"
   song: "🎵 Listen on YouTube: [{title}]({url})"
-  documentary: "📺 Want to know more? Here's a documentary: [{title}]({url})"
-stats_title: "**Game stats**"
-stat_most_questions: "🙋 Most questions asked: **{username}** ({count})"
-stat_valuable: "💎 Most valuable question: **{username}**: {text}"
-stat_closest: "🎯 Closest guess: **{username}**: {text}"
-stat_farthest: "🛰️ Farthest guess: **{username}**: {text}"
-stat_related: "🔗 Weirdly related guess: **{username}**: {text}"
+  documentary: "📺 Want to know more? Watch [{title}]({url})"
+play_again_prompt: "Up for another round? If not, this thread closes <t:{closes}:R>."
+play_again: "Play again"
+play_again_starting: "🎲 **{username}** wants another round! Thinking of something…"
 
-# Instructions for the AI. Kept short: the models know what 20 Questions is.
+# --- Instructions for the AI. Kept short: the models know what 20 Questions is. ---
 prompts:
   # A category: first the tags to search (unless it's a tag itself), then the topics that fit, then each topic picked.
   categories: |
@@ -130,13 +199,10 @@ prompts:
     film from 1990 doesn't fit. A famous fictional animal fits "animals".
   opening: |
     The article above is the secret answer in a game of 20 Questions.
-    - kind and hint: if it's at all quotable, kind "quote" and a famous quote by it or from it (people, books,
-      films and languages are quotable; a language is quoted in that language), or else a quote about it that's
-      famous in history. Never song lyrics: for a song or album, use a famous quote about it. Otherwise kind
-      "haiku" and a three-line haiku spoken by the subject itself in the first
-      person. Just the quote or the haiku, never the answer's name or any part or form of it (pick another quote if
-      needed).
-    - author: who said or wrote the quote ("" for a haiku); authorIsAnswer: true if that author is the answer.
+    - facts: exactly 3 fun facts from the article to help the players along. Each is one short sentence (under 25
+      words), surprising or delightful rather than dry, and from a different part of the article. Start broad and
+      get a little more specific. Call it "it", "this person" or similar: never use the answer's name or any part
+      or form of it, and don't give it away outright.
     - answers: 10 to 20 short guesses that should win because they mean exactly the same thing: names, alternative
       names, abbreviations, close synonyms, singular and plural. Never broader categories, related things or parts
       (for Frog: not "amphibian", "toad" or "tadpole").
@@ -158,7 +224,7 @@ prompts:
     ask: '{username} asked "{text}" and got "{result}"'
     hint: '{username} asked "{text}" and got a hint'
     chat: '{username} said "{text}"'
-  # The game so far, given to Sonnet when judging a question and when writing a hint.
+  # The game so far, given to Sonnet when judging, writing hints and writing options.
   game: |
     This is a game of 20 Questions with yes-or-no answers.
     Secret answer: {title}
@@ -167,32 +233,51 @@ prompts:
     {facts}
     Questions so far:
     {log}
-    Hints so far:
+    Hints so far (the first three are the fun facts shown at the start):
     {hints}
+  # Judging a question, and the awards it earns, in one call.
   judge: |
     The player has asked a question or made a guess: "{question}"
-    Reply with one word:
+    result, the answer:
     - win: the guess names the secret answer in substance (ignore singular/plural and grammar mistakes; synonyms count)
     - yes: the answer to the question is yes
     - no: the answer to the question is no
     - sort_of: it could be yes or no depending on the context
+    - not_yes_no: it's a question that can't be answered with yes or no (like "What colour is it?")
     Pay close attention to how the question is phrased. A question that doesn't fit the secret answer is "no": if the
     answer is Car, "Is it a Chinese car manufacturer?" is "no", because a car isn't a car manufacturer.
+
+    Then the awards it earns. Be strict: they're rare and should feel special.
+    - hot_stuff: it's very close to the secret answer without quite being it (for Frog: guessing "Toad", or asking
+      "Is it a kind of amphibian that croaks?").
+    - breakthrough: it narrows things down a lot compared to what the players knew before.
+    - team_player: it builds directly on an earlier question that got a "yes" (after "Is it an animal?" got a yes,
+      "Does it live in water?").
+    {scenic}
+  judge_scenic: "- scenic_route: it's wildly unrelated to the secret answer and to everything learned so far."
   hint: |
     Write one hint for the players: a short, simple, factual sentence that helps from what they've asked so far.
     Not a riddle. Don't name the secret answer or repeat earlier hints.
+  # When nobody has asked anything for a while.
+  recap: |
+    The players have gone quiet, probably stuck. Help them get going again:
+    - recap: what they know so far, in one or two short, plain sentences, from the answers and hints above (like
+      "It's alive, lives near water, and isn't a mammal."). If they haven't asked anything yet, sum up the fun facts.
+      Only what they've learned; never more, and never the answer.
+    - questions: exactly 3 good yes-or-no questions they could ask next, each one short. Make them useful for
+      narrowing things down from what they know, and easy to ask without special knowledge.
   options: |
-    The players asked for options to pick the secret answer from.
+    The players will now pick the secret answer from four options in a poll.
     - answer: the secret answer's common name, at most 50 characters.
     - decoys: exactly 3 wrong answers of the same kind, at most 50 characters each, that also fit what the players
       have learned so far, so the choice isn't obvious.
   wrap_up: |
     A game of 20 Questions about the article above has ended ({outcome}). The game log is below.
-    - infocard: a museum-style info card in Discord markdown: one sentence saying what it is, then 3 or 4 short
-      sections, each with a "## " heading (like "## Why it matters" or "## Fun fact") and one or two sentences.
-      Don't repeat the title.
-    - most_valuable_question, closest_guess, farthest_guess, related_guess (a wrong guess unusually related to the
-      answer, like an actor when the answer is their film): pick from the log, or "" for both fields if none fits.
+    - infocard: a museum-style info card in Discord markdown: one sentence saying what it is, then 4 short
+      sections, each with a "## " heading and one or two sentences. Take 3 headings from this list, whichever
+      suit the topic best, and make up 1 heading that's unique to this topic (like "The Soundtrack" for a film,
+      "How to Eat It" for a dish, or "Party Trick" for an animal). Don't repeat the title.
+      {headings}
     - video: for a film or theatre play, kind "trailer" and a YouTube search for its official trailer; for a song,
       kind "song" and a search for the song; otherwise, if a documentary about it likely exists on YouTube, kind
       "documentary" and a search for one; else kind "none" and search "".

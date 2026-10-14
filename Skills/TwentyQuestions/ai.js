@@ -35,7 +35,6 @@ const text = { type: 'string' };
 const yesNo = { type: 'boolean' };
 const list = { type: 'array', items: text };
 const oneOf = values => ({ type: 'string', enum: values });
-const pick = object({ username: text, text });
 
 const articleText = (article, length) => `<article title="${article.title}">\n${article.text.slice(0, length)}\n</article>`;
 const lines = items => (items.length ? items.map(item => `- ${item}`).join('\n') : '(none)');
@@ -107,10 +106,10 @@ module.exports = {
     schema: object({ fits: yesNo }),
   })).fits,
 
-  // -> { kind: 'quote' | 'haiku', hint, author, authorIsAnswer, answers }
+  // The starting hint and the winning guesses -> { facts: [3 fun facts], answers }
   opening: article => call(ACCURATE, 'opening', article.title, {
     article: articleText(article, INTRO), prompt: t('prompts.opening'), input: 'Write the opening.',
-    schema: object({ kind: oneOf(['quote', 'haiku']), hint: text, author: text, authorIsAnswer: yesNo, answers: list }),
+    schema: object({ facts: list, answers: list }),
   }),
 
   // -> 'ask' | 'hint' | 'options' | 'stop' | 'chat'
@@ -120,13 +119,27 @@ module.exports = {
     schema: object({ route: oneOf(['ask', 'hint', 'options', 'stop', 'chat']) }),
   })).route,
 
-  // -> 'win' | 'yes' | 'no' | 'sort_of'
-  judge: async (game, question) => (await call(ACCURATE, 'judge', question, {
-    prompt: gameText(game), input: t('prompts.judge', { question }), maxTokens: 300, seconds: 12,
-    schema: object({ result: oneOf(['win', 'yes', 'no', 'sort_of']) }),
-  })).result,
+  // The answer to a question, and the awards it earns, in one call (the verdict comes first in the JSON):
+  // -> { result: 'win' | 'yes' | 'no' | 'sort_of' | 'not_yes_no', hot_stuff, breakthrough, team_player, scenic_route? }
+  // Scenic Route is only judged when `scenic` is true.
+  judge: (game, question, scenic = false) => call(ACCURATE, 'judge', question, {
+    prompt: gameText(game), input: t('prompts.judge', { question, scenic: scenic ? t('prompts.judge_scenic') : '' }), maxTokens: 300, seconds: 12,
+    schema: object({
+      result: oneOf(['win', 'yes', 'no', 'sort_of', 'not_yes_no']),
+      hot_stuff: yesNo,
+      breakthrough: yesNo,
+      team_player: yesNo,
+      ...(scenic && { scenic_route: yesNo }),
+    }),
+  }),
 
   hint: game => call(ACCURATE, 'hint', game.article.title, { prompt: gameText(game), input: t('prompts.hint'), maxTokens: 300, seconds: 12 }),
+
+  // For a quiet spell: what the players know so far, and questions they could ask next -> { recap, questions: [3] }
+  recap: game => call(ACCURATE, 'recap', game.article.title, {
+    prompt: gameText(game), input: t('prompts.recap'), maxTokens: 400, seconds: 12,
+    schema: object({ recap: text, questions: list }),
+  }),
 
   // Multiple choice for a poll -> { answer, decoys: [3 wrong answers] }
   options: game => call(ACCURATE, 'options', game.article.title, {
@@ -134,12 +147,12 @@ module.exports = {
     schema: object({ answer: text, decoys: list }),
   }),
 
-  // -> { infocard, most_valuable_question, closest_guess, farthest_guess, related_guess, video: { kind, search } }
+  // -> { infocard, video: { kind, search } }
   wrapUp: (game, outcome) => call(ACCURATE, 'wrap-up', `${game.article.title} (${outcome})`, {
-    article: articleText(game.article, INTRO), prompt: t('prompts.wrap_up', { outcome }), input: `Game log:\n${logText(game.log)}`,
+    article: articleText(game.article, INTRO), prompt: t('prompts.wrap_up', { outcome, headings: t.get('infocard_headings').join(', ') }), input: `Game log:\n${logText(game.log)}`,
     maxTokens: 3000, seconds: 25,
     schema: object({
-      infocard: text, most_valuable_question: pick, closest_guess: pick, farthest_guess: pick, related_guess: pick,
+      infocard: text,
       video: object({ kind: oneOf(['trailer', 'song', 'documentary', 'none']), search: text }),
     }),
   }),
