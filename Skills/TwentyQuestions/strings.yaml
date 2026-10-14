@@ -68,8 +68,23 @@ not_yes_no: "🤔 I can only answer yes or no. Try asking it another way!" # doe
 questions_left: "({left} questions left)" # added to an answer or a hint at 15, 10 and 5 questions left
 hint: "💡 {hint}"
 
-# Awards, shown in a box under the answer that earned them. Each player can earn each one once per round.
-award: "**{username}** earned **{name}**\n-# {about}"
+# Awards, shown in a box under the answer that earned them. Players collect them for good: each one is only shown
+# the first time a player earns it.
+award: "**{username}** earned **{name}** ({count}/{total})\n-# {about}\n\n-# {others}" # count: how many they've collected
+award_others: "{names} have this, too." # other players with this award
+award_others_one: "{names} has this, too."
+award_first: "Nobody else has this one yet!"
+list_and: " and "
+list_others: "{count} others" # "Ana, Ben, Cat and 2 others"
+
+# The My awards button at the end of a game: the player's collection, only visible to them. A box for every award,
+# earned or still locked.
+my_awards: "🏅 My awards"
+collection_title: "🏅 **Awards earned:** {count} of {total}"
+collection_earned: "**{name}**{new}\n-# {about}"
+collection_new: " · ✨ New!" # earned in the game that just ended
+collection_locked: "**🔒 Locked**\n{lines}" # one box for all locked awards
+collection_locked_line: "-# {about}" # one line per locked award: how to earn it
 awards:
   hot_stuff:
     name: "🔥 Hot Stuff"
@@ -110,6 +125,90 @@ awards:
   team_player:
     name: "🤝 Team Player"
     about: "Ask a question that builds on a yes someone else got."
+  # Winning
+  winner:
+    name: "🏆 Winner"
+    about: "Make the winning guess."
+  sharpshooter:
+    name: "🎯 Sharpshooter"
+    about: "Make the winning guess with 5 questions or fewer used."
+  no_help_needed:
+    name: "🧭 No Help Needed"
+    about: "Make the winning guess in a game where nobody asked for a hint."
+  hat_trick:
+    name: "🎩 Hat Trick"
+    about: "Make the winning guess in 3 different games."
+  # Coming back
+  welcome_aboard:
+    name: "🐣 Welcome Aboard"
+    about: "Ask your very first question."
+  regular:
+    name: "📚 Regular"
+    about: "Take part in 10 games."
+  explorer:
+    name: "🗺️ Explorer"
+    about: "Take part in games from 5 different categories."
+  centurion:
+    name: "💯 Centurion"
+    about: "Ask 100 questions in total."
+  # Polls and the team
+  wisdom_of_the_crowd:
+    name: "🧠 Wisdom of the Crowd"
+    about: "Vote for the right answer in a poll."
+  swing_vote:
+    name: "🗳️ Swing Vote"
+    about: "Cast the vote that decides a poll."
+  fence_sitter:
+    name: "🌀 Fence Sitter"
+    about: "Get three \"sort of\" answers in one game."
+  full_house:
+    name: "🎉 Full House"
+    about: "Take part in a game with 4 or more players."
+  # Taking part in a game whose topic has one of these tags (from good_articles.json)
+  film_buff:
+    name: "🎬 Film Buff"
+    about: "Take part in a game about a film."
+    tags: [Films]
+  mixtape:
+    name: "🎵 Mixtape"
+    about: "Take part in a game about music or a musician."
+    tags: [Albums & songs, Musicians & singers, Music]
+  cyberpunk:
+    name: "🤖 Cyberpunk"
+    about: "Take part in a game about science fiction."
+    tags: [Sci-Fi]
+  spellbound:
+    name: "🐉 Spellbound"
+    about: "Take part in a game about fantasy."
+    tags: [Fantasy]
+  book_club:
+    name: "📖 Book Club"
+    about: "Take part in a game about a book or a great work."
+    tags: [Books & novels, Great Works]
+  poet_society:
+    name: "✒️ Poet Society"
+    about: "Take part in a game about a writer, poet, poem or play."
+    tags: [Writers & poets, Poems & plays]
+  historian:
+    name: "🏛️ Historian"
+    about: "Take part in a game about history, a battle or a leader."
+    tags: [Ancient history, Medieval history, Modern history, Wars & battles, Royalty & nobility, Politicians & leaders]
+  foodie:
+    name: "🍜 Foodie"
+    about: "Take part in a game about food or drink."
+    tags: [Food & drink]
+  couch_potato:
+    name: "📺 Couch Potato"
+    about: "Take part in a game about TV or animation."
+    tags: [TV shows, TV episodes & seasons, Animation]
+  globetrotter:
+    name: "🌍 Globetrotter"
+    about: "Take part in a game about a city, building, landmark or railway."
+    tags: [Cities & towns, Buildings & structures, Monuments & landmarks, Trains & public transport]
+  # Last, as it needs all the others
+  completionist:
+    name: "👑 Completionist"
+    about: "Collect every other award."
 
 # When nobody has asked anything for a while: what the players know so far, and some questions to try.
 nudge: |

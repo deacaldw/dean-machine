@@ -47,6 +47,8 @@ Add `Skills/<Name>/skill.js` and `Skills/<Name>/strings.yaml`. Load strings with
 - `commands`: slash command definitions.
 - `handle(interaction, ctx)`: handles the commands, plus buttons and menus whose `customId` starts with `<Name>:`.
   `ctx.jobs` lists this skill's jobs on the server (`{ id, data }`); `ctx.add(data)` returns a new job id;
-  `ctx.remove(id)` deletes a job.
+  `ctx.remove(id)` deletes a job. `ctx.storage` is the skill's own object on the server, kept for good (unlike jobs);
+  changes to it are saved.
 - `message(message, ctx)` (optional): called for every message people post in the server.
-- `run(data, client)`: called every tick for each job. Changes to `data` are saved. Return `true` when done.
+- `run(data, client, storage)`: called every tick for each job. Changes to `data` and `storage` are saved. Return
+  `true` when done.

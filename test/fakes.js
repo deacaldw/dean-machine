@@ -1,8 +1,9 @@
 // Minimal stand-ins for the discord.js objects the skills use.
 
-function ctx(list = []) {
+function ctx(list = [], storage = {}) {
   return {
     jobs: list,
+    storage,
     add(data) {
       const id = `j${list.length}`;
       list.push({ id, data });

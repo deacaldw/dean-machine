@@ -16,11 +16,19 @@ const TIME_REMINDERS = [15, 10, 5, 1]; // minutes left
 const CHECK_MS = 30 * 1000; // how often to check the thread is still open
 const COLOR = 0x3366cc;
 const AWARD_COLOR = 0xf1c40f;
+const LOCKED_COLOR = 0x4f545c; // grey, for awards not earned yet
 const AWARD_STREAK = 4; // answers in a row for Trailblazer (yes) and Take a Hint (no)
 const LEAD_MS = 2000; // I'm Here to Lead: a question this soon after the round starts
 const SLEEP_MS = 2 * 60 * 1000; // Sleep on It: this long since the previous question or hint
 const SCENIC_AFTER = 9; // Scenic Route is only judged after this many questions and hints
 const ELEVENTH_HOUR_MS = 60 * 1000; // The 11th Hour: a win with less than this left
+const SHARPSHOOTER_QUESTIONS = 5; // Sharpshooter: win with this many questions or fewer
+const HAT_TRICK_WINS = 3; // Hat Trick: winning guesses in this many games
+const CENTURION_QUESTIONS = 100; // Centurion: questions asked in total
+const FENCE_SITTER_ANSWERS = 3; // Fence Sitter: "sort of" answers in one game
+const REGULAR_GAMES = 10; // Regular: games played
+const EXPLORER_CATEGORIES = 5; // Explorer: different categories played
+const FULL_HOUSE_PLAYERS = 4; // Full House: players in one game
 const LULL_MS = 60 * 1000; // after this long without a question, the players get a recap and some questions to try
 const OPTIONS_SECONDS = 25; // how long the options poll runs
 const FINAL_POLL_DELAY_MS = 5000; // pause between running out of questions and the final poll
@@ -28,7 +36,8 @@ const POLL_ANSWER_LENGTH = 55; // Discord's limit
 const DISCORD_MS = 10 * 1000; // closing the poll and counting its votes
 const WINS = ['win', 'options_win']; // outcomes where the players found the answer
 const RECENT = 6; // lines about what just happened, given to the router
-const PLAY_AGAIN = `${path.basename(__dirname)}:again`; // button customId; the core routes "<Skill>:..." here
+const PLAY_AGAIN = `${path.basename(__dirname)}:again`; // button customIds; the core routes "<Skill>:..." here
+const MY_AWARDS = `${path.basename(__dirname)}:awards`;
 
 // Each thread has one job, kept until the thread is closed:
 // { guildId, channelId, threadId, category, shortlist: [titles left], closesAt, ...the current round (newRound) }
@@ -83,7 +92,7 @@ async function pickArticle(setup) {
     const article = await wiki.article(title);
     if (!article) continue;
     checkCancelled(setup);
-    if (await ai.fits(setup.category, article)) return article;
+    if (await ai.fits(setup.category, article)) return Object.assign(article, { tags: wiki.tagsOf(title) }); // for the category awards
   }
   throw new NoTopics('category_used_up');
 }
@@ -134,14 +143,18 @@ const newRound = (article, opening) => ({
   log: [], // { username, text, result }
   recent: [], // lines about what just happened, for the router
   hints: [...opening.facts], // the fun facts count as hints, so later hints don't repeat them
-  awards: {}, // username -> award keys earned this round
+  players: {}, // userId -> name of everyone who took part (posted or voted), for the awards at the end
+  earned: {}, // userId -> award keys earned for the first time this round, marked new in the collection
   over: false,
   closesAt: null,
 });
 
 const playAgainButton = (closesAt, content = t('play_again_prompt', { closes: Math.floor(closesAt / 1000) })) => ({
   content,
-  components: [{ type: 1, components: [{ type: 2, style: ButtonStyle.Primary, label: t('play_again'), custom_id: PLAY_AGAIN }] }],
+  components: [{ type: 1, components: [
+    { type: 2, style: ButtonStyle.Primary, label: t('play_again'), custom_id: PLAY_AGAIN },
+    { type: 2, style: ButtonStyle.Secondary, label: t('my_awards'), custom_id: MY_AWARDS },
+  ] }],
 });
 
 // Starts a game: from /20questions in a new thread (with the category given, or a random one), or from the Play
@@ -219,16 +232,66 @@ const withLeft = (game, text) => {
   return QUESTION_REMINDERS.includes(left) ? `${text} ${t('questions_left', { left })}` : text;
 };
 
-// The awards a question just earned its player (each player earns each one once per round). Sonnet judged Hot Stuff,
-// Breakthrough, Team Player (building on an earlier yes) and Scenic Route with the answer; the rest come from the log. `before` is when the previous question
-// or hint was (or the round started).
-function awardsFor(game, entry, before, judged) {
+// --- Awards ---
+// Each player collects awards for good, once ever. storage.players is
+// { userId: { name, awards: [keys], questions, wins, games, categories: [categories played, lowercase] } }.
+// Awards are given when a question is answered (awardsFor), when a poll closes (options) and when a game ends (finish).
+
+const AWARDS = Object.keys(t.get('awards')); // every award, in order
+const CATEGORY_AWARDS = AWARDS.filter(key => t.get(`awards.${key}`).tags); // for taking part in a game about these tags
+
+// A player's record, created on first use, with their latest display name (for "Ana, Ben and 2 others have this").
+function playerIn(storage, userId, name) {
+  const player = ((storage.players ??= {})[userId] ??= { name, awards: [] });
+  player.name = name;
+  for (const key of ['questions', 'wins', 'games']) player[key] ??= 0;
+  player.categories ??= [];
+  return player;
+}
+
+// Gives the player the awards that are true in `checks` and new to them, plus Completionist once they have all the
+// others. Returns the new ones, which are also marked new in this game.
+function give(game, storage, userId, name, checks) {
+  const player = playerIn(storage, userId, name);
+  const fresh = Object.keys(checks).filter(key => checks[key] && !player.awards.includes(key));
+  player.awards.push(...fresh);
+  if (!player.awards.includes('completionist') && AWARDS.every(key => key === 'completionist' || player.awards.includes(key))) {
+    player.awards.push('completionist');
+    fresh.push('completionist');
+  }
+  (game.earned[userId] ??= []).push(...fresh);
+  return fresh;
+}
+
+// Adds awards to { userId: { name, keys } }, the awards to show at the end of the game.
+const collect = (earned, userId, name, keys) => keys.length && (earned[userId] ??= { name, keys: [] }).keys.push(...keys);
+
+// "Ana", "Ana and Ben", "Ana, Ben, Cat and Dan", "Ana, Ben, Cat and 2 others"
+function namesList(names) {
+  const items = names.length > 4 ? [...names.slice(0, 3), t('list_others', { count: names.length - 3 })] : names;
+  return items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')}${t('list_and')}${items.at(-1)}`;
+}
+
+// The awards a question just earned its player for the first time ever, added to their collection. Sonnet judged
+// Hot Stuff, Breakthrough, Team Player (building on an earlier yes) and Scenic Route with the answer; the rest come
+// from the log and the player's totals. `before` is when the previous question or hint was (or the round started).
+function awardsFor(game, entry, before, judged, storage) {
   const mine = game.log.filter(e => e.username === entry.username);
   const streak = result => mine.length >= AWARD_STREAK && mine.slice(-AWARD_STREAK).every(e => e.result === result);
   const won = entry.result === 'win';
   const yes = won || entry.result === 'yes';
   const lastYesBy = game.log.slice(0, -1).findLast(e => e.result === 'yes')?.username; // who got the latest yes before this
-  const earned = {
+  const player = playerIn(storage, entry.userId, entry.username);
+  player.questions++;
+  if (won) player.wins++;
+  return give(game, storage, entry.userId, entry.username, {
+    welcome_aboard: player.questions === 1,
+    winner: won,
+    sharpshooter: won && game.used <= SHARPSHOOTER_QUESTIONS,
+    no_help_needed: won && game.used === game.log.length, // hints use up questions but aren't in the log
+    hat_trick: won && player.wins >= HAT_TRICK_WINS,
+    centurion: player.questions >= CENTURION_QUESTIONS,
+    fence_sitter: mine.filter(e => e.result === 'sort_of').length >= FENCE_SITTER_ANSWERS,
     hot_stuff: !won && judged.hot_stuff,
     breakthrough: !won && judged.breakthrough,
     team_player: !won && judged.team_player && Boolean(lastYesBy) && lastYesBy !== entry.username, // someone else's yes
@@ -242,51 +305,100 @@ function awardsFor(game, entry, before, judged) {
     sleep_on_it: entry.at - before >= SLEEP_MS,
     final_boss: mine.length === 1 && game.used > MAX_QUESTIONS / 2 && yes,
     eleventh_hour: won && (game.endsAt - entry.at < ELEVENTH_HOUR_MS || game.used >= MAX_QUESTIONS),
-  };
-  const had = game.awards[entry.username] ?? [];
-  const fresh = Object.keys(earned).filter(key => earned[key] && !had.includes(key));
-  game.awards[entry.username] = [...had, ...fresh];
-  return fresh;
+  });
 }
 
+// The awards for everyone who took part, when the game ends: totals across games, a busy game, and the topic's
+// category awards. Added to `earned` ({ userId: { name, keys } }).
+function endAwards(game, storage, earned) {
+  const category = game.category.toLowerCase();
+  const topicTags = game.article.tags ?? [];
+  const players = Object.entries(game.players);
+  for (const [userId, name] of players) {
+    const player = playerIn(storage, userId, name);
+    player.games++;
+    if (!player.categories.includes(category)) player.categories.push(category);
+    collect(earned, userId, name, give(game, storage, userId, name, {
+      regular: player.games >= REGULAR_GAMES,
+      explorer: player.categories.length >= EXPLORER_CATEGORIES,
+      full_house: players.length >= FULL_HOUSE_PLAYERS,
+      ...Object.fromEntries(CATEGORY_AWARDS.map(key => [key, t.get(`awards.${key}`).tags.some(tag => topicTags.includes(tag))])),
+    }));
+  }
+}
+
+// A box of new awards: each with how many the player has collected, what it means, and who else has it.
+// "Dean earned 🔥 Hot Stuff (5/36)", with the rest in small grey text.
+function awardBox(storage, userId, username, keys) {
+  const count = storage.players[userId].awards.length - keys.length; // before these
+  const parts = keys.map((key, i) => {
+    const others = Object.entries(storage.players).filter(([id, p]) => id !== userId && p.awards.includes(key)).map(([, p]) => p.name);
+    const who = others.length ? t(others.length === 1 ? 'award_others_one' : 'award_others', { names: namesList(others) }) : t('award_first');
+    return t('award', { username, ...t.get(`awards.${key}`), count: count + i + 1, total: AWARDS.length, others: who });
+  });
+  return { color: AWARD_COLOR, description: parts.join('\n\n') };
+}
+
+// The My awards button: the player's collection, only visible to them. A box for each award they've earned (marked
+// new if earned in this thread's latest game), then one grey box listing how to earn the locked ones.
+async function showCollection(interaction, ctx) {
+  const userId = interaction.user.id;
+  const have = ctx.storage.players?.[userId]?.awards ?? [];
+  const fresh = ctx.jobs.find(j => j.data.threadId === interaction.channelId)?.data.earned?.[userId] ?? [];
+  const boxes = AWARDS.filter(key => have.includes(key)).map(key => ({
+    color: AWARD_COLOR,
+    description: t('collection_earned', { ...t.get(`awards.${key}`), new: fresh.includes(key) ? t('collection_new') : '' }),
+  }));
+  const locked = AWARDS.filter(key => !have.includes(key));
+  if (locked.length) {
+    const lines = locked.map(key => t('collection_locked_line', t.get(`awards.${key}`))).join('\n');
+    boxes.push({ color: LOCKED_COLOR, description: cut(t('collection_locked', { lines }), 4096) });
+  }
+  // Discord allows 10 boxes per message.
+  await interaction.reply({ content: t('collection_title', { count: have.length, total: AWARDS.length }), embeds: boxes.slice(0, 10), flags: MessageFlags.Ephemeral });
+  for (let i = 10; i < boxes.length; i += 10) await interaction.followUp({ embeds: boxes.slice(i, i + 10), flags: MessageFlags.Ephemeral });
+}
+
+// --- Questions and hints ---
+
 // A question or guess, judged by Sonnet (with the awards it earns) and answered with a short reply, plus a box with
-// any awards the player earned: "Dean earned 🔥 Hot Stuff", with what it means in small grey text. A right guess
-// wins; after the last question, the players pick the answer in a poll.
-async function ask(game, message) {
-  if (game.used >= MAX_QUESTIONS) return options(game, message.channel); // in case the final poll failed to start
+// any awards the player earned for the first time. A right guess wins; after the last question, the players pick
+// the answer in a poll.
+async function ask(game, message, storage) {
+  if (game.used >= MAX_QUESTIONS) return options(game, message.channel, storage); // in case the final poll failed to start
   const question = cut(message.content, 300);
   const { result, ...judged } = await ai.judge(game, question, game.used >= SCENIC_AFTER);
   if (game.over) return;
   if (result === 'not_yes_no') return quietReply(message, t('not_yes_no')); // not counted
   const before = use(game, message);
-  const entry = { username: nameOf(message), text: question, result, at: game.lastAt };
+  const entry = { userId: message.author.id, username: nameOf(message), text: question, result, at: game.lastAt };
   game.log.push(entry);
   remember(game, 'ask', message, { result });
 
-  const earned = awardsFor(game, entry, before, judged);
-  const lines = earned.map(key => t('award', { username: entry.username, ...t.get(`awards.${key}`) }));
-  const embeds = lines.length ? [{ color: AWARD_COLOR, description: lines.join('\n') }] : [];
-  if (result === 'win') return finish(game, message.channel, 'win', { username: entry.username }, embeds);
+  const earned = awardsFor(game, entry, before, judged, storage);
+  if (result === 'win') return finish(game, message.channel, 'win', { storage, earned: { [entry.userId]: { name: entry.username, keys: earned } }, username: entry.username });
+  const embeds = earned.length ? [awardBox(storage, entry.userId, entry.username, earned)] : [];
   await quietReply(message, { content: withLeft(game, t(`answers.${result}`)), embeds });
-  if (game.used >= MAX_QUESTIONS) await options(game, message.channel, t('out_of_questions'));
+  if (game.used >= MAX_QUESTIONS) await options(game, message.channel, storage, t('out_of_questions'));
 }
 
 // A hint from Sonnet, based on what the players have asked so far. Hints count as questions.
-async function hint(game, message) {
-  if (game.used >= MAX_QUESTIONS) return options(game, message.channel);
+async function hint(game, message, storage) {
+  if (game.used >= MAX_QUESTIONS) return options(game, message.channel, storage);
   const text = await ai.hint(game);
   if (game.over) return;
   use(game, message);
   game.hints.push(text);
   remember(game, 'hint', message);
   await quietReply(message, withLeft(game, t('hint', { hint: text })));
-  if (game.used >= MAX_QUESTIONS) await options(game, message.channel, t('out_of_questions'));
+  if (game.used >= MAX_QUESTIONS) await options(game, message.channel, storage, t('out_of_questions'));
 }
 
 // Four options from Sonnet in a poll that closes after OPTIONS_SECONDS. The option with the most votes is the final
 // answer, so the game ends either way. Until then, only "stop" is listened to (see message()). `lead` is posted
-// first, with a short pause, when the players have run out of questions.
-async function options(game, channel, lead) {
+// first, with a short pause, when the players have run out of questions. Voters earn Wisdom of the Crowd (for
+// voting for the right one) and Swing Vote (when the winning option won by their one vote).
+async function options(game, channel, storage, lead) {
   polling.add(game.threadId);
   try {
     if (lead) {
@@ -307,16 +419,26 @@ async function options(game, channel, lead) {
     await new Promise(resolve => setTimeout(resolve, endsAt - Date.now()));
     if (game.over) return sent.poll.end().catch(() => {}); // stopped or timed out meanwhile
 
-    // Close the poll, then count the voters of each answer (in the order they were posted).
-    const counts = await withTimeout((async () => {
+    // Close the poll, then fetch the voters of each answer (in the order they were posted).
+    const voters = await withTimeout((async () => {
       await sent.poll.end();
-      return Promise.all([...sent.poll.answers.values()].map(a => a.voters.fetch({ limit: 100 }).then(voters => voters.size)));
+      return Promise.all([...sent.poll.answers.values()].map(a => a.voters.fetch({ limit: 100 })));
     })(), DISCORD_MS, 'Closing the poll');
     if (game.over) return;
-    const top = Math.max(...counts);
+    const counts = voters.map(users => users.size);
+    const [top, second = 0] = [...counts].sort((a, b) => b - a);
     const picked = choices.filter((_, i) => counts[i] === top);
     const outcome = top === 0 ? 'options_no_votes' : picked.length === 1 && picked[0] === right ? 'options_win' : 'options_lose';
-    await finish(game, channel, outcome, { picked: picked.join(t('options_or')) });
+    const earned = {};
+    voters.forEach((users, i) => users.forEach(user => {
+      const name = user.globalName ?? user.username;
+      game.players[user.id] ??= name; // voting counts as taking part
+      collect(earned, user.id, name, give(game, storage, user.id, name, {
+        wisdom_of_the_crowd: choices[i] === right,
+        swing_vote: counts[i] === top && top - second === 1,
+      }));
+    }));
+    await finish(game, channel, outcome, { storage, earned, picked: picked.join(t('options_or')) });
   } finally {
     polling.delete(game.threadId);
   }
@@ -370,15 +492,18 @@ async function findVideo(video) {
   return found ? { kind: video.kind, ...found } : null;
 }
 
-// Ends the game once: result line (with the winner's awards), then the answer with an info card (with a trailer or
-// song link), a documentary if there's one, and the button to play again. The thread closes CLOSE_MS later unless
+// Ends the game once: result line (with everyone's new awards), then the answer with an info card (with a trailer or
+// song link), a documentary if there's one, and the buttons to play again and to see your awards. The thread closes CLOSE_MS later unless
 // it's pressed.
-async function finish(game, thread, outcome, extra = {}, embeds = []) {
+async function finish(game, thread, outcome, { storage = {}, earned = {}, ...vars } = {}) {
   if (game.over) return;
   game.over = true;
   game.closesAt = Date.now() + CLOSE_MS;
   const send = msg => thread.send(msg).catch(() => {});
-  const result = t(outcome, { ...extra, used: Math.min(game.used, MAX_QUESTIONS), max: MAX_QUESTIONS });
+  const result = t(outcome, { ...vars, used: Math.min(game.used, MAX_QUESTIONS), max: MAX_QUESTIONS });
+  endAwards(game, storage, earned);
+  // A box per player with new awards (Discord allows 10 boxes per message).
+  const embeds = Object.entries(earned).slice(0, 10).map(([userId, { name, keys }]) => awardBox(storage, userId, name, keys));
   await send(embeds.length ? { content: result, embeds } : result);
   await send(t(WINS.includes(outcome) ? 'card_loading_won' : 'card_loading'));
   thread.sendTyping().catch(() => {});
@@ -404,7 +529,11 @@ module.exports = {
   }],
 
   async handle(interaction, ctx) {
-    if (interaction.isButton?.()) return interaction.customId === PLAY_AGAIN ? start(interaction, ctx) : undefined;
+    if (interaction.isButton?.()) {
+      if (interaction.customId === PLAY_AGAIN) return start(interaction, ctx);
+      if (interaction.customId === MY_AWARDS) return showCollection(interaction, ctx);
+      return;
+    }
     if (interaction.isChatInputCommand()) return start(interaction, ctx);
   },
 
@@ -415,16 +544,17 @@ module.exports = {
     const game = job.data;
     if (game.over) return stopSetup(message);
     lastHeard[game.threadId] = Date.now(); // any message cancels a nudge being written
+    game.players[message.author.id] = nameOf(message);
     try {
       const route = await ai.route(message.content, game.recent);
       if (game.over) return;
       if (polling.has(game.threadId) && route !== 'stop') return; // only "stop" while the options poll runs
       if (route === 'chat') return remember(game, 'chat', message);
       message.channel.sendTyping().catch(() => {}); // a reply is coming
-      if (route === 'ask') return await ask(game, message);
-      if (route === 'hint') return await hint(game, message);
-      if (route === 'options') return await options(game, message.channel);
-      if (route === 'stop') return await finish(game, message.channel, 'stopped');
+      if (route === 'ask') return await ask(game, message, ctx.storage);
+      if (route === 'hint') return await hint(game, message, ctx.storage);
+      if (route === 'options') return await options(game, message.channel, ctx.storage);
+      if (route === 'stop') return await finish(game, message.channel, 'stopped', { storage: ctx.storage });
     } catch (err) {
       console.error(`TwentyQuestions: couldn't answer: ${err.message}`);
       await quietReply(message, t('answer_failed')).catch(() => {});
@@ -433,7 +563,7 @@ module.exports = {
 
   // Reminds players of the time left, nudges them after a quiet spell, and ends the game when time runs out. Closes
   // the thread CLOSE_MS after a game ends, and forgets the thread (deleting its job) once it's closed or gone.
-  async run(game, client) {
+  async run(game, client, storage = {}) {
     const now = Date.now();
     // A Play again that was cut short (say, by a restart) still lets the thread close.
     if (game.over && !game.closesAt && !starting.has(game.guildId)) game.closesAt = now + CLOSE_MS;
@@ -459,7 +589,7 @@ module.exports = {
       await thread.setArchived(true).catch(err => console.error(`TwentyQuestions: couldn't close the thread: ${err.message}`));
       return forget();
     }
-    if (timeUp) await finish(game, thread, 'timeout');
+    if (timeUp) await finish(game, thread, 'timeout', { storage });
     else if (due.length) {
       game.warned.push(...due); // after downtime several may be due at once; post just one
       await thread.send(t('time_left', { ends: Math.floor(game.endsAt / 1000) })).catch(() => {});

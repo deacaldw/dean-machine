@@ -30,6 +30,9 @@ const candidate = a => ({ name: a.name, title: decodeURIComponent(a.url.split('/
 // Every category tag in the pool, sorted.
 const tags = () => [...new Set(pool.flatMap(a => a.tags ?? []))].sort();
 
+// The tags of a candidate, by its title.
+const tagsOf = title => pool.find(a => candidate(a).title === title)?.tags ?? [];
+
 // All candidates with any of these tags: [{ name, title, obscurity }]
 const tagged = wanted => pool.filter(a => (a.tags ?? []).some(tag => wanted.includes(tag))).map(candidate);
 
@@ -67,4 +70,4 @@ async function photos(article, max = 5) {
   return [...main, ...found.filter(url => !main.some(m => fileOf(m) === fileOf(url)))].slice(0, max);
 }
 
-module.exports = { tags, tagged, article, photos, pool };
+module.exports = { tags, tagged, tagsOf, article, photos, pool };

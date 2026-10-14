@@ -21,14 +21,23 @@ test('strings: fills placeholders, returns raw values, falls back to the key', (
   assert.equal(t('missing'), 'missing');
 });
 
-test('db: creates, saves and lists server files', () => {
+test('db: creates, saves and lists server files, with storage per skill', () => {
   const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'db-')), 'Servers');
   const db = createDb(dir);
-  assert.deepEqual(db.get('123'), { jobs: [] });
+  assert.deepEqual(db.get('123'), { jobs: [], storage: {} });
   db.get('123').jobs.push({ id: 'a', type: 'X', data: {} });
+  db.storage('123', 'Skill').players = { u1: ['x'] };
+  assert.equal(db.storage('123', 'Skill'), db.storage('123', 'Skill'), 'the same object every time');
   db.save('123');
   assert.deepEqual(db.list(), ['123']);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, '123.json'), 'utf8')).jobs[0].id, 'a');
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, '123.json'), 'utf8'));
+  assert.equal(saved.jobs[0].id, 'a');
+  assert.deepEqual(saved.storage, { Skill: { players: { u1: ['x'] } } }, 'skill storage is saved with the server');
+
+  const reloaded = createDb(dir);
+  assert.deepEqual(reloaded.storage('123', 'Skill'), { players: { u1: ['x'] } });
+  fs.writeFileSync(path.join(dir, 'old.json'), JSON.stringify({ jobs: [] }));
+  assert.deepEqual(reloaded.get('old').storage, {}, 'older files get storage too');
 });
 
 test('skills: each exports commands, handle and run with valid, unique commands', () => {
