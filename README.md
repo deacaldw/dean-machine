@@ -7,8 +7,8 @@ A Discord bot for multiple servers. Each feature is a self-contained **skill**; 
 
 - **VoteTime** – `/vote-time`: a 24h poll to pick the next game session time, shown in everyone's local time.
 - **Announce** – `/announce`, `/stop-announce`: one-off or repeating announcements.
-- **TwentyQuestions** – `/20questions`, `/20questions-stop`: a co-op guessing game about a random Wikipedia topic,
-  played in a thread and refereed by Claude.
+- **TwentyQuestions** – `/20questions [category]`: a co-op guessing game about a Wikipedia topic from a category
+  (yours, in your own words, or a random one), played in a thread and refereed by Claude.
 
 ## Setup
 

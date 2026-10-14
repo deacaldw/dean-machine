@@ -3,18 +3,43 @@
 
 command: "20questions"
 description: "Start a co-op game of 20 Questions"
-stop_command: "20questions-stop"
-stop_description: "Stop the 20 Questions game in this channel"
 
 already_running: "A game is already running on this server: {link}\nPlease wait until it's over."
 not_here: "Start the game in a normal text channel, not in a thread."
-picking: "🤔 Thinking of something…"
 start_failed: "Sorry, I couldn't start a game right now. Please try again in a minute."
-started: "🎯 **{username}** started a game of **20 Questions**! Join the thread below."
-thread_name: "20 Questions: {topic}"
-no_game: "There's no 20 Questions game running in this channel."
-stop_not_allowed: "Only the player who started the game or someone with Manage Server can stop it."
-stop_done: "Game stopped."
+start_cancelled: "🛑 Game cancelled."
+category_option: "category"
+category_description: "What the answer should be about, in your own words (like \"80s movies\" or \"animals\")"
+picking: "🤔 Thinking of something about **{category}**…"
+category_none: "Sorry, I couldn't find anything about **{category}**. Try something broader, or play without a category."
+category_used_up: "That's every topic I had about **{category}**! Use /20questions to start a new game."
+thread_closed: "This game is over. Use /20questions to start a new one."
+answer_failed: "Sorry, I couldn't answer that just now. Please try again."
+started: "🎯 **{username}** started a game of **20 Questions** about **{category}**! Join the thread below."
+thread_name: "20 Questions: {category}"
+
+# Without a category, a game picks one of these at random. Each must be a tag from good_articles.json.
+categories:
+  - Films
+  - Albums & songs
+  - Musicians & singers
+  - Fictional characters
+  - Actors & entertainers
+  - TV episodes & seasons
+  - Sci-Fi
+  - Buildings & structures
+  - Books & novels
+  - Fantasy
+  - Food & drink
+  - TV shows
+  - Great Works
+  - Animation
+  - Cities & towns
+  - Computers & internet
+  - Trains & public transport
+  - Politicians & leaders
+  - Comics & superheroes
+  - Writers & poets
 
 # The opening: the rules (only in a new thread), then the starting hint - a famous quote or a haiku - in a box.
 rules: |
@@ -25,6 +50,10 @@ rules: |
   The game ends <t:{ends}:R> or whenever you say "stop the game".
 
   Ready? {intro}
+# The intro names the category, then the kind of hint.
+intro: "{category} {hint}"
+category_first: "The category is **{category}**."
+category_next: "Another one from **{category}**!" # Play again
 intro_quote: "Here's a quote to get you on your way..."
 intro_haiku: "Here's a haiku to get you on your way..."
 hint_line: "*{line}*" # each line of the quote or haiku
@@ -45,10 +74,18 @@ hint: "{hint}"
 win: "🎉 **{username}** got it! You found the answer with {used} of {max} questions."
 lose: "💥 That was your final guess. Better luck next time!"
 timeout: "⏰ Time's up!"
+options_win: "🎉 The poll picked **{picked}**. That's right!"
+options_lose: "💥 The poll picked **{picked}**. That's not it - better luck next time!" # a tie shows "A or B"
+options_no_votes: "💥 Nobody voted, so the game is over. Better luck next time!"
+
+# Options: a poll with four choices; the one with the most votes is the final answer.
+options_question: "Which one is it?"
+options_closes: "🗳️ Pick one! The poll closes <t:{ends}:R>, and the option with the most votes is your final answer."
+options_or: " or " # joins tied options
 stopped: "🛑 Game stopped."
 
 # End-of-game card and stats, then the button to play again
-play_again_prompt: "Up for another round?"
+play_again_prompt: "Up for another round? Otherwise this thread closes <t:{closes}:R>."
 play_again: "Play again"
 play_again_starting: "🎲 **{username}** wants another round! Thinking of something…"
 card_loading: "Pulling up the info card…"
@@ -68,20 +105,35 @@ stat_related: "🔗 Weirdly related guess: **{username}**: {text}"
 
 # Instructions for the AI. Kept short: the models know what 20 Questions is.
 prompts:
-  screen: |
-    We're choosing the secret answer for a game of 20 Questions from these numbered Wikipedia topics.
-    Judge every topic, by its number:
-    - suitable: no unsavoury content, except what would be taught in K-12 school, shown in a museum or fine in a PG-13 film.
-    - guessable: it's something taught at school, something from pop culture, science or history, or something
-      encountered in day-to-day life. It can't simply be one of the 5,000 most common English words (like "Dog" or
-      "Water"), though its name may contain them (like "Black Panther" or "Great Wall of China").
+  # A category: first the tags to search (unless it's a tag itself), then the topics that fit, then each topic picked.
+  categories: |
+    Players of 20 Questions asked for a category in their own words. Our topics are tagged with the categories
+    below. Pick the few categories (usually 1 to 3) where most topics fitting the request will be; the topics are
+    checked one by one afterwards. For "80s movies": Films. For "animals": Animals. For "London": Neighbourhoods &
+    streets, Buildings & structures, Monuments & landmarks. Pick none if nothing could fit.
+  categories_input: |
+    The players asked for: "{category}"
+    Categories:
+    {tags}
+  shortlist: |
+    Players of 20 Questions asked for this category: "{category}"
+    From the Wikipedia topics below, list every topic that fits the category and makes a good secret answer,
+    copying each name exactly:
+    - it clearly fits what the players asked for (for "animals", a famous animal character fits too);
+    - suitable: no unsavoury content, except what would be taught in K-12 school, shown in a museum or fine in a
+      PG-13 film;
+    - guessable: something taught at school, from pop culture, science or history, or encountered in day-to-day
+      life. Not simply one of the 5,000 most common English words (like "Dog" or "Water").
+  fits: |
+    Players of 20 Questions asked for this category: "{category}"
+    Would the article above, as the secret answer, clearly fit what they asked for? Be strict: for "80s movies", a
+    film from 1990 doesn't fit. A famous fictional animal fits "animals".
   opening: |
     The article above is the secret answer in a game of 20 Questions.
-    - topic: a very broad category in one or two words, like "Famous Streets", "Warfare" or "Medicine". Nothing
-      more specific, as that would be a strong hint.
     - kind and hint: if it's at all quotable, kind "quote" and a famous quote by it or from it (people, books,
-      films, songs and languages are quotable; a language is quoted in that language), or else a quote about it that's
-      famous in history. Otherwise kind "haiku" and a three-line haiku spoken by the subject itself in the first
+      films and languages are quotable; a language is quoted in that language), or else a quote about it that's
+      famous in history. Never song lyrics: for a song or album, use a famous quote about it. Otherwise kind
+      "haiku" and a three-line haiku spoken by the subject itself in the first
       person. Just the quote or the haiku, never the answer's name or any part or form of it (pick another quote if
       needed).
     - author: who said or wrote the quote ("" for a haiku); authorIsAnswer: true if that author is the answer.
@@ -92,6 +144,7 @@ prompts:
     Sort the newest message from a Discord game of 20 Questions:
     - ask: a question or a guess about the secret answer
     - hint: asks for a hint
+    - options: asks to be given options, choices or a multiple choice to pick the answer from
     - stop: asks to stop or end the game
     - chat: anything else
     Use what just happened to understand short follow-ups: right after a hint, "another one" or "I need another"
@@ -128,6 +181,11 @@ prompts:
   hint: |
     Write one hint for the players: a short, simple, factual sentence that helps from what they've asked so far.
     Not a riddle. Don't name the secret answer or repeat earlier hints.
+  options: |
+    The players asked for options to pick the secret answer from.
+    - answer: the secret answer's common name, at most 50 characters.
+    - decoys: exactly 3 wrong answers of the same kind, at most 50 characters each, that also fit what the players
+      have learned so far, so the choice isn't obvious.
   wrap_up: |
     A game of 20 Questions about the article above has ended ({outcome}). The game log is below.
     - infocard: a museum-style info card in Discord markdown: one sentence saying what it is, then 3 or 4 short
