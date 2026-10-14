@@ -7,8 +7,8 @@ A Discord bot for multiple servers. Each feature is a self-contained **skill**; 
 
 - **VoteTime** – `/vote-time`: a 24h poll to pick the next game session time, shown in everyone's local time.
 - **Announce** – `/announce`, `/stop-announce`: one-off or repeating announcements.
-- **TwentyQuestions** – `/20questions`, `/20questions-stop`: a co-op guessing game about a random Wikipedia topic,
-  played in a thread and refereed by Claude.
+- **TwentyQuestions** – `/20questions [category]`: a co-op guessing game about a Wikipedia topic from a category
+  (yours, in your own words, or a random one), played in a thread and refereed by Claude.
 
 ## Setup
 
@@ -47,6 +47,8 @@ Add `Skills/<Name>/skill.js` and `Skills/<Name>/strings.yaml`. Load strings with
 - `commands`: slash command definitions.
 - `handle(interaction, ctx)`: handles the commands, plus buttons and menus whose `customId` starts with `<Name>:`.
   `ctx.jobs` lists this skill's jobs on the server (`{ id, data }`); `ctx.add(data)` returns a new job id;
-  `ctx.remove(id)` deletes a job.
+  `ctx.remove(id)` deletes a job. `ctx.storage` is the skill's own object on the server, kept for good (unlike jobs);
+  changes to it are saved.
 - `message(message, ctx)` (optional): called for every message people post in the server.
-- `run(data, client)`: called every tick for each job. Changes to `data` are saved. Return `true` when done.
+- `run(data, client, storage)`: called every tick for each job. Changes to `data` and `storage` are saved. Return
+  `true` when done.

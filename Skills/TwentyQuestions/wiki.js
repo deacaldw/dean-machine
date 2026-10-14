@@ -1,29 +1,40 @@
 // Candidate topics from good_articles.json, and their Wikipedia articles and photos.
 const { log } = require('./log');
-const goodArticles = require('./good_articles.json'); // [{ name, url, obscurity: 1 (famous) to 5 (obscure) }]
+const goodArticles = require('./good_articles.json'); // [{ name, url, obscurity: 1 (famous) to 5 (obscure), tags }]
 
 const UA = 'DeanMachine/1.0 (Discord bot; https://github.com/deacaldw/dean-machine)';
 const OBSCURITY = [2, 3, 4]; // famous enough to guess, not so famous it's too easy
 const MAX_TEXT = 20000; // characters of article text kept for the AI
 const MIN_TEXT = 3000; // skip stubs
+const TIMEOUT_MS = 10000; // per request
 
 const pool = goodArticles.filter(a => OBSCURITY.includes(a.obscurity));
 
 async function api(params) {
   const url = 'https://en.wikipedia.org/w/api.php?' + new URLSearchParams({ format: 'json', formatversion: 2, ...params });
   const started = Date.now();
-  const res = await fetch(url, { headers: { 'User-Agent': UA } });
+  let res;
+  try {
+    res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+  } catch (err) {
+    log('Wikipedia', `${params.generator ?? params.action} ${params.titles}`, `failed: ${err.message}`, started);
+    throw err;
+  }
   log('Wikipedia', `${params.generator ?? params.action} ${params.titles}`, `HTTP ${res.status}`, started);
   if (!res.ok) throw new Error(`Wikipedia returned ${res.status}`);
   return res.json();
 }
 
-// `n` different random candidates from the pool: [{ name, title, obscurity }]
-function candidates(n) {
-  const picked = new Set();
-  while (picked.size < Math.min(n, pool.length)) picked.add(pool[Math.floor(Math.random() * pool.length)]);
-  return [...picked].map(a => ({ name: a.name, title: decodeURIComponent(a.url.split('/wiki/')[1]).replace(/_/g, ' '), obscurity: a.obscurity }));
-}
+const candidate = a => ({ name: a.name, title: decodeURIComponent(a.url.split('/wiki/')[1]).replace(/_/g, ' '), obscurity: a.obscurity });
+
+// Every category tag in the pool, sorted.
+const tags = () => [...new Set(pool.flatMap(a => a.tags ?? []))].sort();
+
+// The tags of a candidate, by its title.
+const tagsOf = title => pool.find(a => candidate(a).title === title)?.tags ?? [];
+
+// All candidates with any of these tags: [{ name, title, obscurity }]
+const tagged = wanted => pool.filter(a => (a.tags ?? []).some(tag => wanted.includes(tag))).map(candidate);
 
 // Full text, image and URL of an article, or null if it's a stub, list or disambiguation page.
 async function article(title) {
@@ -59,4 +70,4 @@ async function photos(article, max = 5) {
   return [...main, ...found.filter(url => !main.some(m => fileOf(m) === fileOf(url)))].slice(0, max);
 }
 
-module.exports = { candidates, article, photos, pool };
+module.exports = { tags, tagged, tagsOf, article, photos, pool };

@@ -35,7 +35,6 @@ const text = { type: 'string' };
 const yesNo = { type: 'boolean' };
 const list = { type: 'array', items: text };
 const oneOf = values => ({ type: 'string', enum: values });
-const pick = object({ username: text, text });
 
 const articleText = (article, length) => `<article title="${article.title}">\n${article.text.slice(0, length)}\n</article>`;
 const lines = items => (items.length ? items.map(item => `- ${item}`).join('\n') : '(none)');
@@ -43,19 +42,26 @@ const logText = entries => (entries.length ? entries.map((e, i) => `${i + 1}. ${
 
 // One request. The article (if any) comes first and is cached, since quote searches repeat it for every question.
 // `task` and `about` only describe the request in the log.
-async function call(model, task, about, { article, prompt, input, schema, maxTokens = 1500 }) {
+// `seconds` limits each attempt; a failed or timed-out attempt is retried once.
+async function call(model, task, about, { article, prompt, input, schema, maxTokens = 1500, seconds = 15 }) {
   const started = Date.now();
   const system = [];
   if (article) system.push({ type: 'text', text: article, cache_control: { type: 'ephemeral' } });
   system.push({ type: 'text', text: prompt });
-  const res = await anthropic().messages.create({
-    model: model.model,
-    thinking: model.thinking,
-    max_tokens: maxTokens,
-    system,
-    messages: [{ role: 'user', content: input }],
-    output_config: { effort: 'low', ...(schema && { format: { type: 'json_schema', schema } }) },
-  });
+  let res;
+  try {
+    res = await anthropic().messages.create({
+      model: model.model,
+      thinking: model.thinking,
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: 'user', content: input }],
+      output_config: { effort: 'low', ...(schema && { format: { type: 'json_schema', schema } }) },
+    }, { timeout: seconds * 1000, maxRetries: 1 });
+  } catch (err) {
+    log(`AI ${model.model}`, `${task}: ${about}`, `failed: ${err.message}`, started);
+    throw err;
+  }
   const out = res.content.filter(b => b.type === 'text').map(b => b.text).join('').trim();
   const { input_tokens: fresh = 0, cache_read_input_tokens: cached = 0, cache_creation_input_tokens: written = 0, output_tokens: output = 0 } = res.usage ?? {};
   log(`AI ${model.model}`, `${task}: ${about}`, res.stop_reason === 'refusal' ? 'REFUSED' : out, started, `[tokens in ${fresh + cached + written} (cached ${cached}), out ${output}]`);
@@ -76,42 +82,77 @@ module.exports = {
   sanitize,
   sanitizeAll,
 
-  // Judges many candidate names in one call -> [{ suitable, guessable }] in the same order (missing ones fail).
-  screen: async names => {
-    const { verdicts } = await call(ACCURATE, 'screen', `${names.length} candidates`, {
-      prompt: t('prompts.screen'), input: names.map((name, i) => `${i + 1}. ${name}`).join('\n'), maxTokens: 4000,
-      schema: object({ verdicts: { type: 'array', items: object({ number: { type: 'integer' }, suitable: yesNo, guessable: yesNo }) } }),
+  // The tags (from `tags`) to search for a player's category, like "80s movies" -> ['Films']. May be empty.
+  categories: async (category, tags) => (await call(ACCURATE, 'categories', category, {
+    prompt: t('prompts.categories'), input: t('prompts.categories_input', { category, tags: tags.join('\n') }), maxTokens: 500, seconds: 10,
+    schema: object({ tags: { type: 'array', items: oneOf(tags) } }),
+  })).tags,
+
+  // Every name that fits the player's category and makes a good secret answer -> indexes into `names`.
+  // Names rather than numbers, which slip in long lists. Names that don't match one given are dropped.
+  shortlist: async (category, names) => {
+    const { topics } = await call(ACCURATE, 'shortlist', `${category} (${names.length} candidates)`, {
+      prompt: t('prompts.shortlist', { category }), input: names.join('\n'), maxTokens: 4000, seconds: 20,
+      schema: object({ topics: list }),
     });
-    return names.map((_, i) => verdicts.find(v => v.number === i + 1) ?? { suitable: false, guessable: false });
+    const index = new Map(names.map((name, i) => [sanitize(name), i])); // replies are sanitized too
+    return [...new Set(topics.map(name => index.get(name)).filter(i => i !== undefined))];
   },
 
-  // -> { topic, kind: 'quote' | 'haiku', hint, author, authorIsAnswer, answers }
+  // True if the article really fits the player's category; checked before each round, as the shortlist is judged
+  // by names alone.
+  fits: async (category, article) => (await call(ACCURATE, 'fits', `${article.title} for ${category}`, {
+    article: articleText(article, FACTS), prompt: t('prompts.fits', { category }), input: 'Does it fit?', maxTokens: 200, seconds: 10,
+    schema: object({ fits: yesNo }),
+  })).fits,
+
+  // The starting hint and the winning guesses -> { facts: [3 fun facts], answers }
   opening: article => call(ACCURATE, 'opening', article.title, {
     article: articleText(article, INTRO), prompt: t('prompts.opening'), input: 'Write the opening.',
-    schema: object({ topic: text, kind: oneOf(['quote', 'haiku']), hint: text, author: text, authorIsAnswer: yesNo, answers: list }),
+    schema: object({ facts: list, answers: list }),
   }),
 
-  // -> 'ask' | 'hint' | 'stop' | 'chat'
+  // -> 'ask' | 'hint' | 'options' | 'stop' | 'chat'
   // `recent` is a few lines about what just happened, so short follow-ups ("another one?") make sense.
   route: async (message, recent = []) => (await call(FAST, 'route', message, {
-    prompt: t('prompts.route'), input: t('prompts.route_input', { recent: lines(recent), message }), maxTokens: 200,
-    schema: object({ route: oneOf(['ask', 'hint', 'stop', 'chat']) }),
+    prompt: t('prompts.route'), input: t('prompts.route_input', { recent: lines(recent), message }), maxTokens: 200, seconds: 8,
+    schema: object({ route: oneOf(['ask', 'hint', 'options', 'stop', 'chat']) }),
   })).route,
 
-  // -> 'win' | 'yes' | 'no' | 'sort_of'
-  judge: async (game, question) => (await call(ACCURATE, 'judge', question, {
-    prompt: gameText(game), input: t('prompts.judge', { question }), maxTokens: 300,
-    schema: object({ result: oneOf(['win', 'yes', 'no', 'sort_of']) }),
-  })).result,
-
-  hint: game => call(ACCURATE, 'hint', game.article.title, { prompt: gameText(game), input: t('prompts.hint'), maxTokens: 300 }),
-
-  // -> { infocard, most_valuable_question, closest_guess, farthest_guess, related_guess, video: { kind, search } }
-  wrapUp: (game, outcome) => call(ACCURATE, 'wrap-up', `${game.article.title} (${outcome})`, {
-    article: articleText(game.article, INTRO), prompt: t('prompts.wrap_up', { outcome }), input: `Game log:\n${logText(game.log)}`,
-    maxTokens: 3000,
+  // The answer to a question, and the awards it earns, in one call (the verdict comes first in the JSON):
+  // -> { result: 'win' | 'yes' | 'no' | 'sort_of' | 'not_yes_no', hot_stuff, breakthrough, team_player, scenic_route? }
+  // Scenic Route is only judged when `scenic` is true.
+  judge: (game, question, scenic = false) => call(ACCURATE, 'judge', question, {
+    prompt: gameText(game), input: t('prompts.judge', { question, scenic: scenic ? t('prompts.judge_scenic') : '' }), maxTokens: 300, seconds: 12,
     schema: object({
-      infocard: text, most_valuable_question: pick, closest_guess: pick, farthest_guess: pick, related_guess: pick,
+      result: oneOf(['win', 'yes', 'no', 'sort_of', 'not_yes_no']),
+      hot_stuff: yesNo,
+      breakthrough: yesNo,
+      team_player: yesNo,
+      ...(scenic && { scenic_route: yesNo }),
+    }),
+  }),
+
+  hint: game => call(ACCURATE, 'hint', game.article.title, { prompt: gameText(game), input: t('prompts.hint'), maxTokens: 300, seconds: 12 }),
+
+  // For a quiet spell: what the players know so far, and questions they could ask next -> { recap, questions: [3] }
+  recap: game => call(ACCURATE, 'recap', game.article.title, {
+    prompt: gameText(game), input: t('prompts.recap'), maxTokens: 400, seconds: 12,
+    schema: object({ recap: text, questions: list }),
+  }),
+
+  // Multiple choice for a poll -> { answer, decoys: [3 wrong answers] }
+  options: game => call(ACCURATE, 'options', game.article.title, {
+    prompt: gameText(game), input: t('prompts.options'), maxTokens: 300, seconds: 12,
+    schema: object({ answer: text, decoys: list }),
+  }),
+
+  // -> { infocard, video: { kind, search } }
+  wrapUp: (game, outcome) => call(ACCURATE, 'wrap-up', `${game.article.title} (${outcome})`, {
+    article: articleText(game.article, INTRO), prompt: t('prompts.wrap_up', { outcome, headings: t.get('infocard_headings').join(', ') }), input: `Game log:\n${logText(game.log)}`,
+    maxTokens: 3000, seconds: 25,
+    schema: object({
+      infocard: text,
       video: object({ kind: oneOf(['trailer', 'song', 'documentary', 'none']), search: text }),
     }),
   }),

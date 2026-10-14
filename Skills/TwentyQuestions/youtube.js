@@ -16,7 +16,8 @@ async function search(query) {
   try {
     const params = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: 1, safeSearch: 'strict', q: query, key: process.env.YOUTUBE_API_KEY });
     const res = await fetch(`https://www.googleapis.com/youtube/v3/search?${params}`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
-    if (!res.ok) throw new Error(`YouTube returned ${res.status}`);
+    // Google explains a refusal in the body (like a key restriction), so pass that on.
+    if (!res.ok) throw new Error(`YouTube returned ${res.status}: ${(await res.json().catch(() => null))?.error?.message ?? 'no details'}`);
     const [video] = (await res.json()).items ?? [];
     log('YouTube', query, video ? video.snippet.title : 'no results', started);
     return video ? { title: plainTitle(video.snippet.title), url: `https://www.youtube.com/watch?v=${video.id.videoId}` } : null;

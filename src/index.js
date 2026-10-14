@@ -16,9 +16,10 @@ const PERMISSIONS = [P.ViewChannel, P.SendMessages, P.SendMessagesInThreads, P.C
 // Each Skills/<Name>/skill.js exports:
 //   commands                  slash command definitions
 //   handle(interaction, ctx)  handles its commands and components whose customId starts with "<Name>:"
-//                             ctx: { jobs: [{ id, data }], add(data) -> id, remove(id) }
+//                             ctx: { jobs: [{ id, data }], add(data) -> id, remove(id), storage }
 //   message(message, ctx)     optional: called for every message from a person in a server
-//   run(data, client)         called every loop tick; may update data; returns true when the job is done
+//   run(data, client, storage) called every loop tick; may update data; returns true when the job is done
+// `storage` is the skill's own object for the server, kept for good (unlike jobs). Changes to jobs and storage are saved.
 const skills = {};
 const skillsDir = path.join(root, 'Skills');
 for (const name of fs.readdirSync(skillsDir)) {
@@ -41,10 +42,13 @@ client.once(Events.ClientReady, async () => {
   setInterval(loop, LOOP_SECONDS * 1000);
 });
 
-// Runs a skill callback with its jobs on that server, and saves the server if they changed.
+// What gets saved for a server, to tell whether anything changed.
+const snapshot = server => JSON.stringify([server.jobs, server.storage]);
+
+// Runs a skill callback with its jobs and storage on that server, and saves the server if they changed.
 async function withJobs(guildId, name, callback) {
   const server = db.get(guildId);
-  const before = JSON.stringify(server.jobs);
+  const before = snapshot(server);
   try {
     await callback({
       jobs: server.jobs.filter(j => j.skill === name),
@@ -54,11 +58,12 @@ async function withJobs(guildId, name, callback) {
         return id;
       },
       remove: id => { server.jobs = server.jobs.filter(j => j.id !== id); },
+      storage: db.storage(guildId, name),
     });
   } catch (err) {
     console.error(`${name}: ${err.message}`);
   }
-  if (JSON.stringify(server.jobs) !== before) db.save(guildId);
+  if (snapshot(server) !== before) db.save(guildId);
 }
 
 client.on(Events.InteractionCreate, interaction => {
@@ -83,18 +88,18 @@ async function loop() {
   try {
     for (const serverId of db.list()) {
       const server = db.get(serverId);
-      const before = JSON.stringify(server.jobs);
+      const before = snapshot(server);
       const done = [];
       for (const job of server.jobs) {
         try {
-          if (!skills[job.skill] || await skills[job.skill].run(job.data, client)) done.push(job.id);
+          if (!skills[job.skill] || await skills[job.skill].run(job.data, client, db.storage(serverId, job.skill))) done.push(job.id);
         } catch (err) {
           console.error(`${job.skill} job ${job.id} failed: ${err.message}`);
           done.push(job.id);
         }
       }
       server.jobs = server.jobs.filter(j => !done.includes(j.id));
-      if (JSON.stringify(server.jobs) !== before) db.save(serverId);
+      if (snapshot(server) !== before) db.save(serverId);
     }
   } finally {
     running = false;

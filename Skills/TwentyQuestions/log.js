@@ -1,5 +1,5 @@
-// Logs every outside request (AI, Wikipedia) to stdout, one line each. Off for now; set LOGGING to true to see them.
-const LOGGING = false;
+// Logs every outside request (AI, Wikipedia, YouTube) to stdout, one line each. Set LOGGING to false to silence it.
+const LOGGING = true;
 
 // "[20Q] Wikipedia query Frog → HTTP 200 (123 ms)". Long values are shortened to one line; `note` isn't.
 const short = (value, max = 160) => {
